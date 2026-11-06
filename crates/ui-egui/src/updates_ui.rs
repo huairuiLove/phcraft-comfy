@@ -147,7 +147,7 @@ mod tests {
         let count = calls.clone();
         let sender = Arc::new(Mutex::new(None));
         let tx = sender.clone();
-        let app = PhotocraftApp::new(
+        let mut app = PhotocraftApp::new(
             Session::new(),
             Services {
                 check_updates: Some(Box::new(move || {
@@ -159,6 +159,8 @@ mod tests {
                 ..Default::default()
             },
         );
+        // The workspace default is off; these tests exercise the on path.
+        app.session.edit_prefs(|p| p.general.automatically_check_updates = true);
         (app, calls, sender)
     }
 

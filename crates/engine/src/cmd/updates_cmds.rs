@@ -211,7 +211,7 @@ mod tests {
         s.execute("help.checkForUpdates", json!({})).unwrap();
         assert_eq!(s.execute("updates.status", json!({})).unwrap()["result"]["status"], "failed");
         s.load_prefs_json("{}").unwrap();
-        assert!(s.prefs().general.automatically_check_updates);
+        assert!(!s.prefs().general.automatically_check_updates);
         s.execute("prefs.set", json!({"path": "general.automaticallyCheckUpdates", "value": false})).unwrap();
         let saved = s.prefs_to_json();
         let mut restored = Session::new();
