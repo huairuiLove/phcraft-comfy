@@ -102,9 +102,14 @@ fn input_specs<'a>(object_info: &'a Value, class_type: &str) -> Option<Vec<Input
 }
 
 /// Whether an input definition is widget-capable (holds a value) rather than connection-only
-/// (IMAGE, MODEL, …): a combo list, or one of the scalar widget types.
+/// (IMAGE, MODEL, …): a combo list, or one of the scalar widget types. A socketless input
+/// (`{"socketless": true}`, e.g. ComfyUI 0.44's `IMAGECOMPARE` compare view) has no socket, so it
+/// can only ever hold a widget value whatever its type name is.
 fn widget_capable(def: &Value) -> bool {
     let Some(a) = def.as_array() else { return false };
+    if socketless(def) {
+        return true;
+    }
     match a.first() {
         Some(Value::Array(_)) => true,
         Some(Value::String(t)) => {
@@ -112,6 +117,15 @@ fn widget_capable(def: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+/// A frontend-only widget (`socketless: true`): the node's execute ignores it, a UI save
+/// serialises no value for it, but the API format still requires the key.
+fn socketless(def: &Value) -> bool {
+    def.as_array()
+        .and_then(|a| a.get(1))
+        .and_then(Value::as_object)
+        .is_some_and(|o| o.get("socketless").and_then(Value::as_bool) == Some(true))
 }
 
 /// Whether the input's widget carries a trailing control (`seed` + "randomize"): such a widget
@@ -304,6 +318,11 @@ pub fn convert_ui_workflow(ui: &Value, object_info: &Value) -> std::result::Resu
                 match v {
                     Some(v) => {
                         inputs.insert(spec.name.clone(), v);
+                    }
+                    // The server ignores socketless widgets but rejects a missing required key;
+                    // null is the value it accepts (verified against ComfyUI 0.44's /prompt).
+                    None if socketless(spec.def) => {
+                        inputs.insert(spec.name.clone(), Value::Null);
                     }
                     None if spec.required => {
                         return Err(format!("node {id} (`{class}`): input `{}` has no value; connect it or set it in ComfyUI", spec.name));
@@ -1115,8 +1134,9 @@ mod tests {
                 "input_order": {"required": ["width", "height"], "optional": ["bboxes"]}},
             "BatchImagesNode": {"input": {"required": {}, "optional": {}}, "input_order": {"required": [], "optional": []}},
             "PreviewAny": {"input": {"required": {"source": ["*", {}]}}, "input_order": {"required": ["source"], "optional": []}},
-            "ImageCompare": {"input": {"required": {"image_a": ["IMAGE", {}], "image_b": ["IMAGE", {}]}},
-                "input_order": {"required": ["image_a", "image_b"], "optional": []}},
+            "ImageCompare": {"input": {"required": {"compare_view": ["IMAGECOMPARE", {"socketless": true}]},
+                "optional": {"image_a": ["IMAGE", {}], "image_b": ["IMAGE", {}]}},
+                "input_order": {"required": ["compare_view"], "optional": ["image_a", "image_b"]}},
             "EmptyFlux2LatentImage": {"input": {"required": {
                 "width": ["INT", {"default": 1024}], "height": ["INT", {"default": 1024}], "batch_size": ["INT", {"default": 1}]}},
                 "input_order": {"required": ["width", "height", "batch_size"], "optional": []}},
@@ -1156,6 +1176,20 @@ mod tests {
         assert!(api.pointer("/47/inputs/clip").is_some());
         assert_eq!(api.pointer("/9/inputs/filename_prefix"), Some(&json!("image_flux3_klein_distilled_image_edit")));
         assert_eq!(api.pointer("/59/inputs/unet_name"), Some(&json!("flux3-image-klein-base-int8-convrot.safetensors")));
+    }
+
+    #[test]
+    fn socketless_widgets_convert_to_null_instead_of_failing() {
+        let oi = object_info_fixture();
+        // ComfyUI 0.44's ImageCompare: `compare_view` is a socketless frontend widget — a UI save
+        // carries no value for it, and the old conversion refused the whole workflow over it.
+        let ui = json!({"nodes": [
+            {"id": 1, "type": "LoadImage", "widgets_values": ["photo.png", "image"], "inputs": []},
+            {"id": 2, "type": "ImageCompare", "widgets_values": [], "inputs": [{"name": "image_a", "link": 3}]},
+        ], "links": [[3, 1, 0, 2, 0, "IMAGE"]]});
+        let api = convert_ui_workflow(&ui, &oi).unwrap();
+        assert_eq!(api.pointer("/2/inputs/compare_view"), Some(&Value::Null));
+        assert_eq!(api.pointer("/2/inputs/image_a"), Some(&json!(["1", 0])));
     }
 
     #[test]
