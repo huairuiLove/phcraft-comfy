@@ -35,11 +35,14 @@ pub use thumbs::surface_fingerprint;
 impl PhotocraftApp {
     pub fn new(mut session: Session, mut services: Services) -> Self {
         session.updates.check = services.check_updates.take();
+        session.comfy.transport = services.comfy_transport.take();
+        session.comfy.workflows_dir = services.comfy_workflows_dir.take();
         let mut app = Self {
             session,
             ui: UiState::default(),
             services,
             canvases: HashMap::new(),
+            comfy_queue: Default::default(),
             navigator_textures: HashMap::new(),
             display_memo: HashMap::new(),
             navigator_gpu: HashMap::new(),
@@ -220,6 +223,7 @@ impl PhotocraftApp {
         prefs_ui::load(&mut app);
         layers_panel_ui::restore_options(&mut app);
         histogram_panel::restore_options(&mut app);
+        comfy_panel::restore_options(&mut app);
         // After the saved preferences, which say whether the set was already offered.
         kys_import::offer_import(&mut app);
         notices::wayland_file_drop_guidance(&mut app);

@@ -1,0 +1,16 @@
+{
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_4b_int8_convrot.safetensors", "type": "flux3", "device": "default"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
+  "4": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["2", 0]}},
+  "7": {"class_type": "KSampler", "inputs": {
+    "seed": 0, "steps": 50, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0,
+    "model": ["59", 0], "positive": ["17", 0], "negative": ["17", 1], "latent_image": ["17", 2]}},
+  "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+  "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "photocraft_flux3_edit", "images": ["8", 0]}},
+  "17": {"class_type": "ReferenceMultiLatent", "inputs": {
+    "positive": ["4", 0], "negative": ["58", 0], "vae": ["3", 0],
+    "images.image0": ["54", 0], "resolution": "resize", "resolution.megapixels": 1.0}},
+  "54": {"class_type": "LoadImage", "inputs": {"image": "", "upload": "image"}},
+  "58": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["2", 0]}},
+  "59": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux3-image-klein-base-int8-convrot.safetensors", "weight_dtype": "default"}}
+}

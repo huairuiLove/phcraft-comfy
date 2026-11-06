@@ -37,6 +37,8 @@ pub enum Group {
     Layers,
     /// Brushes presets.
     Brushes,
+    /// ComfyUI Generation (Window › ComfyUI Generation; not in the default layout).
+    Comfy,
 }
 
 impl Group {
@@ -52,6 +54,7 @@ impl Group {
             Group::History => "history",
             Group::Layers => "layers",
             Group::Brushes => "brushes",
+            Group::Comfy => "comfy",
         }
     }
 
@@ -66,6 +69,7 @@ impl Group {
             Group::History => 200.0,
             Group::Layers => 320.0,
             Group::Brushes => 200.0,
+            Group::Comfy => 340.0,
         }
     }
 
@@ -80,6 +84,7 @@ impl Group {
             Group::History => 130.0,
             Group::Layers => 200.0,
             Group::Brushes => 150.0,
+            Group::Comfy => 240.0,
         }
     }
 
@@ -113,6 +118,7 @@ impl Group {
             Group::History => &["History", "Actions", "Layer Comps"],
             Group::Layers => &["Layers", "Channels", "Paths"],
             Group::Brushes => &["Brushes"],
+            Group::Comfy => &["Generate"],
         }
     }
 
@@ -134,12 +140,13 @@ impl Group {
             Group::History => &mut tabs.history,
             Group::Layers => &mut tabs.layers,
             Group::Brushes => &mut tabs.brushes,
+            Group::Comfy => &mut tabs.comfy,
         }
     }
 
     /// The group for a `panels` / `dockTabs` key ("color", "properties", …).
     pub fn from_key(key: &str) -> Option<Group> {
-        Group::ALL.into_iter().find(|g| g.key() == key)
+        Group::ALL.into_iter().chain([Group::Comfy]).find(|g| g.key() == key)
     }
 
     pub fn shown(self, panels: &Panels) -> bool {
@@ -151,6 +158,7 @@ impl Group {
             Group::History => panels.history,
             Group::Layers => panels.layers,
             Group::Brushes => panels.brushes,
+            Group::Comfy => panels.comfy,
         }
     }
 
@@ -163,6 +171,7 @@ impl Group {
             Group::History => &mut panels.history,
             Group::Layers => &mut panels.layers,
             Group::Brushes => &mut panels.brushes,
+            Group::Comfy => &mut panels.comfy,
         }
     }
 }

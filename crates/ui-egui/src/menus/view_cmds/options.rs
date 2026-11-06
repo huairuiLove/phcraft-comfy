@@ -213,6 +213,7 @@ pub(super) fn panel_tab(app: &PhotocraftApp, id: &str) -> Option<(&'static str, 
         "window.panel.properties" => ("properties", 0),
         // Their own Character | Paragraph group, so Properties stays open (#150).
         "window.panel.character" | "type.panels.character" => ("character", 0),
+        "window.panel.comfy" => ("comfy", 0),
         "window.panel.paragraph" | "type.panels.paragraph" => ("character", 1),
         "window.panel.swatches" => ("color", usize::from(pro)),
         "window.panel.color" => ("color", usize::from(!pro)),
@@ -228,6 +229,7 @@ pub(super) fn panel_state<'a>(app: &'a mut PhotocraftApp, panel: &str) -> (&'a m
         "layers" => (&mut p.layers, &mut t.layers),
         "color" => (&mut p.color, &mut t.color),
         "character" => (&mut p.character, &mut t.character),
+        "comfy" => (&mut p.comfy, &mut t.comfy),
         _ => (&mut p.properties, &mut t.properties),
     }
 }

@@ -31,6 +31,7 @@ pub mod comps_ui;
 pub mod doc_props_ui;
 mod dock;
 pub mod histogram_panel;
+pub mod comfy_panel;
 mod history;
 pub mod history_menu_ui;
 pub(crate) mod info;

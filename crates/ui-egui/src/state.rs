@@ -40,6 +40,9 @@ pub struct Panels {
     /// Window › Character / Paragraph: the Character | Paragraph dock group (#150).
     #[serde(default)]
     pub character: bool,
+    /// Window › ComfyUI Generation: the ComfyUI generate dock group.
+    #[serde(default)]
+    pub comfy: bool,
     /// The toolbar's header chevron: two columns even when one fits (#1197).
     #[serde(default)]
     pub toolbar_double: bool,
@@ -81,6 +84,7 @@ impl Default for Panels {
             brush_settings: false,
             brushes: false,
             character: false,
+            comfy: false,
             toolbar_double: false,
             dock: true,
             hidden_by_tab: None,
@@ -457,6 +461,9 @@ pub struct UiState {
     /// Histogram panel options: view, channel, statistics, colours, source.
     #[serde(default)]
     pub histogram_panel: crate::histogram_panel::HistogramPanelState,
+    /// ComfyUI Generation panel options: prompt, workflow, source, place, seed, steps, batch.
+    #[serde(default)]
+    pub comfy_panel: crate::panels::comfy_panel::ComfyPanelState,
     /// The tonal range dragged across the Histogram panel's graph (its statistics), `[from, to]`.
     #[serde(default, skip_deserializing)]
     pub histogram_range: Option<[u8; 2]>,
@@ -586,6 +593,7 @@ impl Default for UiState {
             layer_filter_smart: Vec::new(),
             layers_panel_options: LayersPanelOptions::default(),
             histogram_panel: Default::default(),
+            comfy_panel: Default::default(),
             histogram_range: None,
             layers_panel_dialog: None,
             layer_filter_by: Default::default(),

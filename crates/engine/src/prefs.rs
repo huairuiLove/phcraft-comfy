@@ -1077,11 +1077,15 @@ pub struct Integrations {
     pub allow_agent_control: bool,
     /// Default control port (0 = only when `--control` is given).
     pub control_port: u32,
+    /// ComfyUI server for File › Generate Image (ai.comfyui.*; desktop only).
+    pub comfy_url: String,
+    /// Folder the imported ComfyUI workflows live in (empty: the config dir's `comfy_workflows`).
+    pub comfy_workflows_dir: String,
 }
 
 impl Default for Integrations {
     fn default() -> Self {
-        Self { allow_agent_control: true, control_port: 0 }
+        Self { allow_agent_control: true, control_port: 0, comfy_url: crate::comfy_cmds::DEFAULT_URL.into(), comfy_workflows_dir: String::new() }
     }
 }
 

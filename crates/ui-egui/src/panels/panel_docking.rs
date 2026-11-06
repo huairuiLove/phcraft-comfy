@@ -1135,6 +1135,7 @@ pub(crate) fn prepare_legacy_update(
                 Group::History => tabs.history,
                 Group::Layers => tabs.layers,
                 Group::Brushes => tabs.brushes,
+                Group::Comfy => tabs.comfy,
             };
             let id = group.tabs(pro).get(index).and_then(|label| normalize(label)).ok_or("dockTabs index is outside the panel group")?;
             if visibility == Some(false) {

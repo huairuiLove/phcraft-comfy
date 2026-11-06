@@ -776,6 +776,7 @@ pub static CATALOG: &[(&[&str], &str, Option<&str>, &str)] = &[
     (&["Window"], "Brush Settings", Some("F5"), "window.panel.brushSettings"),
     (&["Window"], "Brushes", None, "window.panel.brushes"),
     (&["Window"], "Channels", None, "window.panel.channels"),
+    (&["Window"], "ComfyUI Generation", None, "window.panel.comfy"),
     (&["Window"], "Character", None, "window.panel.character"),
     (&["Window"], "Character Styles", None, "window.panel.characterStyles"),
     (&["Window"], "Clone Source", None, "window.panel.cloneSource"),

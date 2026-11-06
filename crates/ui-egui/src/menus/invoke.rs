@@ -230,6 +230,25 @@ fn invoke_file_commands(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, 
             let d = app.ui.open_dialog(DialogKind::NewDocument, fields);
             Ok(json!({"dialog": d}))
         }
+        // File › Generate Image: the parameter dialog (no live preview — each run queues a real
+        // generation on the ComfyUI server and lands as a background job). Explicit params from
+        // automation, the control channel and MCP execute directly.
+        "ai.comfyui.generate" if params.as_object().is_none_or(|o| o.is_empty()) => {
+            if let Some(Err(why)) = photocraft_engine::commands::find(id).map(|c| (c.enabled)(&app.session)) {
+                return Err(why);
+            }
+            let dialog = crate::filter_dialog::open(app, id).ok_or("no such command")?;
+            Ok(json!({"dialog": dialog}))
+        }
+        // File › Generate (ComfyUI): the generation panel (the queue, workflow picker and result
+        // shelf). Explicit params from automation, the control channel and MCP execute directly.
+        "ai.comfyui.fill" if params.as_object().is_none_or(|o| o.is_empty()) => {
+            if let Some(Err(why)) = photocraft_engine::commands::find(id).map(|c| (c.enabled)(&app.session)) {
+                return Err(why);
+            }
+            app.ui.panels.comfy = true;
+            Ok(json!({"visible": true}))
+        }
         "file.open" => {
             if let Some(path) = params.get("path").and_then(Value::as_str) {
                 open_path(app, path)

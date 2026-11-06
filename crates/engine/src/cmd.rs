@@ -65,6 +65,8 @@ pub mod brush_preset_cmds;
 pub mod channel_cmds;
 pub mod color_cmds;
 pub mod color_to_alpha_cmds;
+pub mod comfy_cmds;
+pub mod comfy_workflow_cmds;
 pub mod comps_cmds;
 pub mod contour_lib_cmds;
 pub mod cutout_cmds;
@@ -1351,6 +1353,8 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::layer_multi_cmds::specs());
     v.extend(crate::layer_copy_cmds::specs());
     v.extend(crate::prefs::specs());
+    v.extend(comfy_cmds::specs());
+    v.extend(comfy_workflow_cmds::specs());
     v.extend(crate::updates_cmds::specs());
     v.extend(crate::edit_menu_cmds::specs());
     v.extend(crate::fill_key_cmds::specs());

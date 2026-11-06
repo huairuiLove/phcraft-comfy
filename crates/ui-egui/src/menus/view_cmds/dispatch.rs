@@ -68,6 +68,7 @@ pub fn handles(id: &str) -> bool {
             | "window.panel.adjustments"
             | "type.panels.character"
             | "type.panels.paragraph"
+            | "window.panel.comfy"
     )
 }
 
@@ -157,6 +158,7 @@ pub fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
             "layers" => (p.layers, t.layers),
             "color" => (p.color, t.color),
             "character" => (p.character, t.character),
+            "comfy" => (p.comfy, t.comfy),
             _ => (p.properties, t.properties),
         };
         return Some(vis && cur == tab);

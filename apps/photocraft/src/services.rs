@@ -763,6 +763,8 @@ pub fn native(automation: Option<photocraft_automation::AuthorizedWorkspace>) ->
         open_url: Some(Box::new(|url: &str| open::that(url).map_err(|e| e.to_string()))),
         beep: Some(platform_beep),
         check_updates: Some(crate::updates::service()),
+        comfy_transport: Some(crate::comfy::transport()),
+        comfy_workflows_dir: config_dir().map(|d| d.join("comfy_workflows")),
         clipboard_set_image: Some({
             let clip = clip.clone();
             guarded_clipboard_set(move |w: u32, h: u32, px: &[u8]| {

@@ -457,6 +457,11 @@ pub struct Services {
     pub alert: Option<fn()>,
     /// Starts a background check for published releases (desktop, outside Flatpak).
     pub check_updates: Option<photocraft_engine::updates_cmds::CheckFn>,
+    /// Blocking HTTP calls to the ComfyUI server for File › Generate Image (desktop; `ai.comfyui.*`).
+    pub comfy_transport: Option<photocraft_engine::comfy_cmds::ComfyFn>,
+    /// Where `ai.comfyui.workflows.*` stores imported workflows (the config dir's
+    /// `comfy_workflows` folder; desktop only).
+    pub comfy_workflows_dir: Option<std::path::PathBuf>,
     /// Files delivered asynchronously (web drag-and-drop): drained every frame and opened as
     /// documents.
     pub inbox: Option<Inbox>,
