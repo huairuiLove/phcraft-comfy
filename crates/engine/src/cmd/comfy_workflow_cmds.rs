@@ -492,7 +492,7 @@ pub fn analyze(workflow: &Value) -> Value {
                 image_nodes.push(id.clone());
             }
         }
-        let (negative_ids, positive_ids) = sides_of_samplers(obj);
+        let (_, positive_ids) = sides_of_samplers(obj);
         for id in positive_ids {
             if obj.get(&id).and_then(|n| n.pointer("/inputs/text")).is_some() {
                 prompt_nodes.push(id);
@@ -719,7 +719,7 @@ impl FillPlace {
 }
 
 /// A bounded text param (`prompt`/`negative`), like comfy_cmds' own field parsing.
-fn text_field<'a>(p: &'a Value, key: &str, cmd: &str) -> Result<String> {
+fn text_field(p: &Value, key: &str, cmd: &str) -> Result<String> {
     let v = comfy_cmds::text(p, key, cmd)?.to_string();
     if v.len() > PROMPT_MAX {
         return Err(bad(cmd, format!("`{key}` is longer than {PROMPT_MAX} characters")));
@@ -1132,7 +1132,7 @@ mod tests {
         assert_eq!(api.pointer("/54/class_type"), Some(&json!("LoadImage")));
         assert_eq!(api.pointer("/54/inputs/image"), Some(&json!("fashion_portrait_blue_silk_gown_vis.png")));
         // The seed keeps its drawn value and drops the trailing "randomize"; the rest line up.
-        assert_eq!(api.pointer("/7/inputs/seed"), Some(&json!(3_419_938_903_470_40_u64)));
+        assert_eq!(api.pointer("/7/inputs/seed"), Some(&json!(341_993_890_347_040_u64)));
         assert_eq!(api.pointer("/7/inputs/steps"), Some(&json!(50)));
         let cfg = api.pointer("/7/inputs/cfg").and_then(Value::as_f64).unwrap();
         assert!((cfg - 1.0).abs() < 1e-9, "{cfg}");

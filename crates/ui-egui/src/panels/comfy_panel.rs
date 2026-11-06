@@ -513,12 +513,10 @@ fn queue(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     if let Some(i) = remove {
         app.comfy_queue.tasks.remove(i);
     }
-    if let Some(i) = retry {
-        if let Some(t) = app.comfy_queue.tasks.get_mut(i) {
-            t.state = "waiting".into();
-            t.error = String::new();
-            t.results.clear();
-        }
+    if let Some(t) = retry.and_then(|i| app.comfy_queue.tasks.get_mut(i)) {
+        t.state = "waiting".into();
+        t.error = String::new();
+        t.results.clear();
     }
 }
 
@@ -554,17 +552,17 @@ fn gallery(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 ui.label(egui::RichText::new(format!("seed {seed}")).small().weak());
                 ui.label(egui::RichText::new(workflow).small().weak());
                 ui.horizontal(|ui| {
-                    if ui.small_button("As Layer").clicked() {
-                        if let Err(e) = app_.run("ai.comfyui.place", json!({"result": i, "as": "layer"})) {
-                            app_.ui.status = e;
-                            app_.ui.status_error = true;
-                        }
+                    if ui.small_button("As Layer").clicked()
+                        && let Err(e) = app_.run("ai.comfyui.place", json!({"result": i, "as": "layer"}))
+                    {
+                        app_.ui.status = e;
+                        app_.ui.status_error = true;
                     }
-                    if ui.small_button("New Doc").clicked() {
-                        if let Err(e) = app_.run("ai.comfyui.place", json!({"result": i, "as": "document"})) {
-                            app_.ui.status = e;
-                            app_.ui.status_error = true;
-                        }
+                    if ui.small_button("New Doc").clicked()
+                        && let Err(e) = app_.run("ai.comfyui.place", json!({"result": i, "as": "document"}))
+                    {
+                        app_.ui.status = e;
+                        app_.ui.status_error = true;
                     }
                     if ui.small_button("Save…").clicked() {
                         let idx = *i;

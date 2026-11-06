@@ -739,6 +739,7 @@ fn family_name(f: Family) -> &'static str {
 }
 
 /// Queue `workflow`, wait for it to finish (up to `timeout_s`), download the outputs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn queue_and_collect(
     ctx: &JobCtx,
     call: &impl Fn(ComfyCall) -> std::result::Result<ComfyReply, String>,
@@ -1025,10 +1026,12 @@ mod tests {
         // Nothing usable at all.
         assert!(pick(&params(json!({})).unwrap(), &ServerModels::default()).is_err());
         // Edit/video-only UNETs are skipped automatically.
-        let mut edit_only = ServerModels::default();
-        edit_only.unets_gguf = vec!["Qwen-Image-Edit-2509-Q4_K_M.gguf".into(), "wan2.1-i2v-14b-480p-Q5_K_M.gguf".into()];
-        edit_only.clips = vec!["qwen_2.5_vl_7b_fp8_scaled.safetensors".into()];
-        edit_only.vaes = vec!["qwen_image_vae.safetensors".into()];
+        let edit_only = ServerModels {
+            unets_gguf: vec!["Qwen-Image-Edit-2509-Q4_K_M.gguf".into(), "wan2.1-i2v-14b-480p-Q5_K_M.gguf".into()],
+            clips: vec!["qwen_2.5_vl_7b_fp8_scaled.safetensors".into()],
+            vaes: vec!["qwen_image_vae.safetensors".into()],
+            ..ServerModels::default()
+        };
         assert!(pick(&params(json!({})).unwrap(), &edit_only).is_err());
     }
 
