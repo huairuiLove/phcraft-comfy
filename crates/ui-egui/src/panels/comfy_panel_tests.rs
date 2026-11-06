@@ -13,18 +13,14 @@ fn fresh_app() -> PhotocraftApp {
 }
 
 fn harness(app: PhotocraftApp) -> Harness<'static, PhotocraftApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 800.0)).build_ui_state(
-        |ui, app: &mut PhotocraftApp| {
-            let ctx = ui.ctx().clone();
-            if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
-                return;
-            }
-            crate::panels::dock_area(app, ui);
-            egui::CentralPanel::default().show(ui, |_| {});
-        },
-        app,
-    );
-    crate::PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::Pro);
+    // build_eframe, like the i18n live tests: the panel draws Chinese template labels, which
+    // need the full font stack (system CJK fallback) setup_context installs.
+    // The dock tests' build_ui_state path runs no accessibility check; on the eframe path the
+    // check wants per-widget names the egui fork's builders do not offer yet.
+    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 800.0)).with_max_steps(64).with_accessibility_check(false).build_eframe(move |cc| {
+        crate::PhotocraftApp::setup_context(&cc.egui_ctx, crate::theme::ThemeKind::Pro);
+        app
+    });
     h.state_mut().ui.theme = crate::theme::ThemeKind::Pro;
     h.run_steps(4);
     h
@@ -32,7 +28,7 @@ fn harness(app: PhotocraftApp) -> Harness<'static, PhotocraftApp> {
 
 #[test]
 fn window_menu_toggles_the_comfy_panel() {
-    let mut app = fresh_app();
+    let app = fresh_app();
     let ctx = {
         let mut h = harness(app);
         assert!(!h.state().ui.panels.comfy);

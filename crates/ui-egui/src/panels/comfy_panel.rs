@@ -39,6 +39,12 @@ pub struct ComfyPanelState {
     pub steps: String,
     /// How many seed variants one Add to Queue run enqueues (1..=8).
     pub batch: u32,
+    /// The selected prompt template ("" none, "fill", "atmosphere").
+    pub template: String,
+    /// Template phrase label → checked (missing: the phrase's own default).
+    pub template_on: std::collections::BTreeMap<String, bool>,
+    /// Template choice label → the picked value's label ("": none).
+    pub template_pick: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for ComfyPanelState {
@@ -52,6 +58,9 @@ impl Default for ComfyPanelState {
             seed: String::new(),
             steps: String::new(),
             batch: 1,
+            template: String::new(),
+            template_on: std::collections::BTreeMap::new(),
+            template_pick: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -129,6 +138,140 @@ fn seed_of(raw: &str) -> Option<i64> {
     t.parse::<i64>().ok().filter(|v| *v >= 0)
 }
 
+// ------------------------------------------------------------------ prompt templates
+
+/// One line a template offers: a checkbox (empty `values`) or a pick-one choice whose picked
+/// value carries its own English phrase. `text` is what lands in the prompt when on; a choice's
+/// `{v}` is replaced by the picked value's text.
+struct Phrase {
+    label: &'static str,
+    text: &'static str,
+    values: &'static [(&'static str, &'static str)],
+    default_on: bool,
+}
+
+const fn on(label: &'static str, text: &'static str) -> Phrase {
+    Phrase { label, text, values: &[], default_on: true }
+}
+const fn off(label: &'static str, text: &'static str) -> Phrase {
+    Phrase { label, text, values: &[], default_on: false }
+}
+
+/// 生图 · 扩图：lock the person, keep the background and tone, then lens, composition and the
+/// render-style words, in the order they should read in the prompt.
+const FILL_PHRASES: &[Phrase] = &[
+    on("严格限制人物不变", "strictly keep the person unchanged"),
+    on("严格限制人物位置不变", "strictly keep the person's position in the frame unchanged"),
+    on("严格限制人物动作不变", "strictly keep the person's pose and action unchanged"),
+    on("严格限制人物五官不变", "strictly keep the person's facial features unchanged"),
+    on("保留背景", "keep the original background unchanged"),
+    Phrase {
+        label: "焦段",
+        text: "{v}",
+        values: &[
+            ("24mm 超广角", "24mm ultra-wide angle lens"),
+            ("35mm 广角", "35mm wide angle lens"),
+            ("50mm 标准", "50mm standard lens"),
+            ("85mm 人像", "85mm portrait lens"),
+            ("135mm 长焦", "135mm telephoto lens"),
+        ],
+        default_on: false,
+    },
+    Phrase {
+        label: "构图",
+        text: "{v}",
+        values: &[
+            ("三分法", "rule of thirds composition"),
+            ("居中对称", "centered symmetrical composition"),
+            ("引导线", "leading lines composition"),
+            ("框架构图", "natural framing composition"),
+            ("对角线", "diagonal composition"),
+            ("全身像", "full-body composition"),
+            ("半身像", "half-body portrait composition"),
+        ],
+        default_on: false,
+    },
+    on("色调明暗与原图一致", "keep the color tone and brightness consistent with the original image"),
+    off("Blender Cycles 渲染", "Blender Cycles render"),
+    off("超现实 3D", "surreal hyperrealistic 3D"),
+    off("光线追踪", "ray tracing"),
+    off("次世代 PBR 材质", "next-generation PBR materials"),
+    Phrase {
+        label: "高清分辨率",
+        text: "{v}",
+        values: &[
+            ("8K", "8K UHD, ultra high detail"),
+            ("16K", "16K ultra high definition, extreme detail"),
+        ],
+        default_on: false,
+    },
+];
+
+/// 大气透视：the person locks plus the volumetric depth set.
+const ATMOSPHERE_PHRASES: &[Phrase] = &[
+    on("严格限制人物不变", "strictly keep the person unchanged"),
+    on("严格限制人物位置不变", "strictly keep the person's position in the frame unchanged"),
+    on("严格限制人物动作不变", "strictly keep the person's pose and action unchanged"),
+    on("严格限制人物五官不变", "strictly keep the person's facial features unchanged"),
+    on("给场景增加体积雾", "add volumetric fog to the scene"),
+    on("增强体积雾效果", "enhance the volumetric fog effect"),
+    on("体现场景纵深", "emphasize the depth of the scene"),
+    on("增加空气尘埃", "add floating dust particles in the air"),
+    on("体现大气透视", "strong atmospheric perspective"),
+];
+
+/// The named templates the picker offers.
+fn template_phrases(id: &str) -> Option<&'static [Phrase]> {
+    match id {
+        "fill" => Some(FILL_PHRASES),
+        "atmosphere" => Some(ATMOSPHERE_PHRASES),
+        _ => None,
+    }
+}
+
+fn template_label(id: &str) -> &'static str {
+    match id {
+        "fill" => "生图 · 扩图",
+        "atmosphere" => "大气透视",
+        _ => "None",
+    }
+}
+
+/// Whether a phrase is checked: the stored pick, else the phrase's default.
+fn phrase_on(state: &ComfyPanelState, p: &Phrase) -> bool {
+    *state.template_on.get(p.label).unwrap_or(&p.default_on)
+}
+
+/// The English text a phrase contributes right now ("" when off or a choice with no value).
+fn phrase_text(state: &ComfyPanelState, p: &Phrase) -> String {
+    if p.values.is_empty() {
+        return if phrase_on(state, p) { p.text.to_string() } else { String::new() };
+    }
+    let picked = state.template_pick.get(p.label).map(String::as_str).unwrap_or("");
+    p.values
+        .iter()
+        .find(|(l, _)| *l == picked)
+        .map(|(_, t)| p.text.replace("{v}", t))
+        .unwrap_or_default()
+}
+
+/// The full prompt this run sends: the user's own words first, then the template's phrases.
+pub fn compose_prompt(state: &ComfyPanelState) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !state.prompt.trim().is_empty() {
+        parts.push(state.prompt.trim().to_string());
+    }
+    if let Some(phrases) = template_phrases(&state.template) {
+        for p in phrases {
+            let t = phrase_text(state, p);
+            if !t.is_empty() {
+                parts.push(t);
+            }
+        }
+    }
+    parts.join(", ")
+}
+
 /// Enqueue `batch` tasks from the current options.
 fn add_to_queue(app: &mut PhotocraftApp) {
     let p = app.ui.comfy_panel.clone();
@@ -142,7 +285,7 @@ fn add_to_queue(app: &mut PhotocraftApp) {
         };
         app.comfy_queue.tasks.push(QueueTask {
             state: "waiting".into(),
-            prompt: p.prompt.clone(),
+            prompt: compose_prompt(&p),
             workflow: p.workflow.clone(),
             source: p.source.clone(),
             place: p.place.clone(),
@@ -381,8 +524,58 @@ fn source(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 
 fn prompt(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let mut p = app.ui.comfy_panel.clone();
-    ui.strong("Prompt");
-    let r = egui::TextEdit::multiline(&mut p.prompt).desired_rows(3).desired_width(f32::INFINITY).hint_text("what to generate (English works best)").show(ui);
+    let mut changed = false;
+    // The template picker; "无" leaves just the user's own words.
+    ui.horizontal(|ui| {
+        ui.strong("Prompt");
+        ui.label(egui::RichText::new("Template").small());
+        egui::ComboBox::from_id_salt("comfy-template").selected_text(template_label(&p.template)).show_ui(ui, |ui| {
+            for id in ["", "fill", "atmosphere"] {
+                if ui.selectable_label(p.template == id, template_label(id)).clicked() {
+                    p.template = id.to_string();
+                    changed = true;
+                }
+            }
+        });
+    });
+    // The template's phrases: checkboxes and pick-one choices, two columns to stay compact.
+    if let Some(phrases) = template_phrases(&p.template) {
+        let per_col = phrases.len().div_ceil(2);
+        ui.columns(2, |cols| {
+            for (ci, col) in cols.iter_mut().enumerate() {
+                for ph in phrases.iter().skip(ci * per_col).take(per_col) {
+                    if ph.values.is_empty() {
+                        let mut on = phrase_on(&p, ph);
+                        if col.checkbox(&mut on, ph.label).changed() {
+                            p.template_on.insert(ph.label.to_string(), on);
+                            changed = true;
+                        }
+                    } else {
+                        let old = p.template_pick.get(ph.label).cloned().unwrap_or_default();
+                        let mut picked = old.clone();
+                        col.horizontal(|col| {
+                            col.label(egui::RichText::new(format!("{}:", ph.label)).small());
+                            egui::ComboBox::from_id_salt(format!("comfy-tpl-{}", ph.label))
+                                .selected_text(if picked.is_empty() { "none".into() } else { picked.clone() })
+                                .show_ui(col, |ui| {
+                                    ui.selectable_value(&mut picked, String::new(), "none");
+                                    for (vl, _) in ph.values {
+                                        ui.selectable_value(&mut picked, vl.to_string(), *vl);
+                                    }
+                                });
+                        });
+                        if picked != old {
+                            p.template_pick.insert(ph.label.to_string(), picked);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        });
+    }
+    // The user's own description, then the composed prompt exactly as it will be sent.
+    ui.label(egui::RichText::new("Your description").small());
+    let r = egui::TextEdit::multiline(&mut p.prompt).desired_rows(2).desired_width(f32::INFINITY).hint_text("what to change (English works best)").show(ui);
     if r.response.changed() {
         app.ui.comfy_panel.prompt = p.prompt.clone();
         persist_options(app);
@@ -393,6 +586,17 @@ fn prompt(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         app.ui.comfy_panel.negative = p.negative.clone();
         persist_options(app);
     }
+    if changed {
+        app.ui.comfy_panel.template = p.template.clone();
+        app.ui.comfy_panel.template_on = p.template_on.clone();
+        app.ui.comfy_panel.template_pick = p.template_pick.clone();
+        persist_options(app);
+    }
+    let full = compose_prompt(&p);
+    let used = template_phrases(&p.template).map(|ph| ph.iter().filter(|ph| !phrase_text(&p, ph).is_empty()).count()).unwrap_or(0);
+    ui.label(egui::RichText::new(format!("Full prompt ({used} template phrases)")).small().strong());
+    let mut show = full;
+    ui.add(egui::TextEdit::multiline(&mut show).interactive(false).desired_rows(3).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
 }
 
 // ---- parameters and enqueue
@@ -602,4 +806,85 @@ fn decode_png(bytes: &[u8]) -> Option<egui::ColorImage> {
     let size = [img.width as usize, img.height as usize];
     let src: Vec<u8> = img.pixels;
     (size[0] > 0 && size[1] > 0 && src.len() == size[0] * size[1] * 4).then(|| egui::ColorImage::from_rgba_unmultiplied(size, &src))
+}
+
+// ------------------------------------------------------------------ template tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(template: &str, prompt: &str) -> ComfyPanelState {
+        ComfyPanelState { template: template.into(), prompt: prompt.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn fill_template_defaults_read_person_background_tone() {
+        let s = state("fill", "add a red rose to her hair");
+        let p = compose_prompt(&s);
+        assert!(p.starts_with("add a red rose to her hair"), "{p}");
+        for needle in [
+            "strictly keep the person unchanged",
+            "position in the frame unchanged",
+            "pose and action unchanged",
+            "facial features unchanged",
+            "keep the original background unchanged",
+            "color tone and brightness consistent",
+        ] {
+            assert!(p.contains(needle), "missing `{needle}` in {p}");
+        }
+        // The off-by-default style words and the unpicked choices contribute nothing.
+        assert!(!p.contains("ray tracing") && !p.contains("Cycles") && !p.contains("8K") && !p.contains("lens"), "{p}");
+    }
+
+    #[test]
+    fn choices_and_toggles_change_the_composition() {
+        let mut s = state("fill", "rebuild the scene");
+        s.template_on.insert("保留背景".into(), false);
+        s.template_pick.insert("焦段".into(), "85mm 人像".into());
+        s.template_pick.insert("构图".into(), "三分法".into());
+        s.template_pick.insert("高清分辨率".into(), "16K".into());
+        s.template_on.insert("光线追踪".into(), true);
+        s.template_on.insert("Blender Cycles 渲染".into(), true);
+        let p = compose_prompt(&s);
+        assert!(p.contains("rebuild the scene"));
+        assert!(p.contains("85mm portrait lens") && p.contains("rule of thirds composition"), "{p}");
+        assert!(p.contains("16K ultra high definition") && p.contains("ray tracing") && p.contains("Blender Cycles render"), "{p}");
+        assert!(!p.contains("keep the original background"), "{p}");
+        // A choice cleared back to 无 stops contributing.
+        s.template_pick.insert("焦段".into(), String::new());
+        assert!(!compose_prompt(&s).contains("lens"));
+    }
+
+    #[test]
+    fn atmosphere_template_is_the_full_fog_set() {
+        let p = compose_prompt(&state("atmosphere", ""));
+        for needle in ["volumetric fog to the scene", "enhance the volumetric fog effect", "depth of the scene", "floating dust particles", "atmospheric perspective", "strictly keep the person unchanged"] {
+            assert!(p.contains(needle), "missing `{needle}` in {p}");
+        }
+        // One lock turned off is honoured.
+        let mut s = state("atmosphere", "");
+        s.template_on.insert("增加空气尘埃".into(), false);
+        assert!(!compose_prompt(&s).contains("dust"));
+    }
+
+    #[test]
+    fn no_template_is_the_users_words_alone() {
+        assert_eq!(compose_prompt(&state("", "just this")), "just this");
+        assert_eq!(compose_prompt(&state("fill", "")), compose_prompt(&state("fill", ""))); // stable
+        assert!(!compose_prompt(&state("", "just this")).contains("strictly"));
+    }
+
+    #[test]
+    fn old_panel_state_without_template_fields_loads() {
+        let old = serde_json::json!({"prompt": "p", "batch": 4});
+        let s: ComfyPanelState = serde_json::from_value(old).unwrap();
+        assert_eq!((s.prompt.as_str(), s.batch, s.template.as_str()), ("p", 4, ""));
+        // And a full state round-trips.
+        let mut s = state("atmosphere", "foggy");
+        s.template_on.insert("体现大气透视".into(), false);
+        s.template_pick.insert("焦段".into(), "50mm 标准".into());
+        let back: ComfyPanelState = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
+        assert_eq!(back, s);
+    }
 }
