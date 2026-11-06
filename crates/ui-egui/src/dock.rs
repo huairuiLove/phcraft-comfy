@@ -43,7 +43,7 @@ pub enum Group {
 
 impl Group {
     /// Photoshop Essentials order, top to bottom.
-    pub const ALL: [Group; 7] = [Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History, Group::Layers, Group::Brushes];
+    pub const ALL: [Group; 8] = [Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History, Group::Layers, Group::Brushes, Group::Comfy];
 
     pub fn key(self) -> &'static str {
         match self {
@@ -146,7 +146,7 @@ impl Group {
 
     /// The group for a `panels` / `dockTabs` key ("color", "properties", …).
     pub fn from_key(key: &str) -> Option<Group> {
-        Group::ALL.into_iter().chain([Group::Comfy]).find(|g| g.key() == key)
+        Group::ALL.into_iter().find(|g| g.key() == key)
     }
 
     pub fn shown(self, panels: &Panels) -> bool {

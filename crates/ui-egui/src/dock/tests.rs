@@ -11,7 +11,7 @@ use crate::theme::ThemeKind;
 #[test]
 fn bad_stored_values_are_sanitised() {
     let mut l = DockLayout { order: vec![Group::Layers, Group::Layers, Group::Color], ..Default::default() };
-    assert_eq!(l.order(), vec![Group::Layers, Group::Brushes, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
+    assert_eq!(l.order(), vec![Group::Layers, Group::Brushes, Group::Comfy, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
     for bad in [f32::NAN, -10.0, f32::INFINITY, 1e12] {
         l.heights.insert(Group::Color, bad);
         let h = l.height(Group::Color);
@@ -19,7 +19,7 @@ fn bad_stored_values_are_sanitised() {
     }
     // Unknown fields, wrong types and old UI state all load.
     let back: DockLayout = serde_json::from_value(json!({"order": ["layers"], "bogus": 1})).unwrap();
-    assert_eq!(back.order(), vec![Group::Layers, Group::Brushes, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
+    assert_eq!(back.order(), vec![Group::Layers, Group::Brushes, Group::Comfy, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
     let mut ui = serde_json::to_value(crate::state::UiState::default()).unwrap();
     ui.as_object_mut().unwrap().remove("dock");
     let ui: crate::state::UiState = serde_json::from_value(ui).unwrap();
@@ -587,7 +587,7 @@ fn window_character_opens_its_own_group_and_keeps_properties() {
     let old = DockLayout { order: vec![Group::Color, Group::Properties, Group::Navigator, Group::History, Group::Layers], ..Default::default() };
     assert_eq!(old.order(), Group::ALL.to_vec());
     let moved = DockLayout { order: vec![Group::Layers, Group::Color], ..Default::default() };
-    assert_eq!(moved.order(), vec![Group::Layers, Group::Brushes, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
+    assert_eq!(moved.order(), vec![Group::Layers, Group::Brushes, Group::Comfy, Group::Color, Group::Properties, Group::Character, Group::Navigator, Group::History]);
 }
 
 #[test]
