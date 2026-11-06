@@ -438,7 +438,7 @@ fn workflow(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         ui.strong("Workflow");
         let entries: Vec<(String, bool)> = app.comfy_queue.workflows.iter().map(|w| (w.0.clone(), w.1)).collect();
         let selected = if app.ui.comfy_panel.workflow.is_empty() { entries.first().map(|w| w.0.clone()).unwrap_or_default() } else { app.ui.comfy_panel.workflow.clone() };
-        egui::ComboBox::from_id_salt("comfy-workflow").selected_text(if selected.is_empty() { "(none — import one)".to_string() } else { selected.clone() }).show_ui(ui, |ui| {
+        craft_ui::ComboBox::from_id_salt("comfy-workflow").selected_text(if selected.is_empty() { "(none — import one)".to_string() } else { selected.clone() }).show_ui(ui, |ui| {
             for (name, builtin) in &entries {
                 let label = if *builtin { format!("{name} (built-in)") } else { name.clone() };
                 ui.selectable_value(&mut app.ui.comfy_panel.workflow, name.clone(), label).clicked();
@@ -529,7 +529,7 @@ fn prompt(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.strong("Prompt");
         ui.label(egui::RichText::new("Template").small());
-        egui::ComboBox::from_id_salt("comfy-template").selected_text(template_label(&p.template)).show_ui(ui, |ui| {
+        craft_ui::ComboBox::from_id_salt("comfy-template").selected_text(template_label(&p.template)).show_ui(ui, |ui| {
             for id in ["", "fill", "atmosphere"] {
                 if ui.selectable_label(p.template == id, template_label(id)).clicked() {
                     p.template = id.to_string();
@@ -555,7 +555,7 @@ fn prompt(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         let mut picked = old.clone();
                         col.horizontal(|col| {
                             col.label(egui::RichText::new(format!("{}:", ph.label)).small());
-                            egui::ComboBox::from_id_salt(format!("comfy-tpl-{}", ph.label))
+                            craft_ui::ComboBox::from_id_salt(format!("comfy-tpl-{}", ph.label))
                                 .selected_text(if picked.is_empty() { "none".into() } else { picked.clone() })
                                 .show_ui(col, |ui| {
                                     ui.selectable_value(&mut picked, String::new(), "none");
@@ -633,7 +633,7 @@ fn params(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     });
     ui.horizontal(|ui| {
         ui.label("Results");
-        egui::ComboBox::from_id_salt("comfy-place").selected_text(place_label(&p.place)).show_ui(ui, |ui| {
+        craft_ui::ComboBox::from_id_salt("comfy-place").selected_text(place_label(&p.place)).show_ui(ui, |ui| {
             for (key, label) in [("none", "Stay in the panel"), ("layer", "Place as layer (masked)"), ("document", "Open as documents")] {
                 ui.selectable_value(&mut p.place, key.to_string(), label).clicked();
             }

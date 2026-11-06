@@ -1388,11 +1388,16 @@ mod native {
             assert!(owned.read(&stamp).is_err());
             assert!(owned.overwrite(b"<svg/>").is_err());
             std::fs::remove_file(&owned.file).unwrap();
-            rustix::fs::mkfifoat(rustix::fs::CWD, &owned.file, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR).unwrap();
-            assert!(owned.stamp().is_err());
-            let began = Instant::now();
-            assert!(owned.read(&stamp).is_err());
-            assert!(began.elapsed() < Duration::from_secs(1));
+            // rustix has no mkfifoat on Apple targets, so the FIFO half of the test runs only
+            // where the syscall wrapper exists (upstream builds this on Linux).
+            #[cfg(not(target_os = "macos"))]
+            {
+                rustix::fs::mkfifoat(rustix::fs::CWD, &owned.file, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR).unwrap();
+                assert!(owned.stamp().is_err());
+                let began = Instant::now();
+                assert!(owned.read(&stamp).is_err());
+                assert!(began.elapsed() < Duration::from_secs(1));
+            }
             assert_eq!(std::fs::read(&target).unwrap(), b"private contents");
         }
 

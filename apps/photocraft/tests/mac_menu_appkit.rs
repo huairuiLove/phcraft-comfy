@@ -13,6 +13,8 @@
 mod mac_menu;
 
 #[cfg(target_os = "macos")]
+// One scripted AppKit session; splitting it would obscure the sequence it walks.
+#[allow(clippy::cognitive_complexity)]
 fn main() {
     use objc2::MainThreadMarker;
     use objc2::rc::Retained;

@@ -80,6 +80,7 @@ pub use cmd::brush_preset_cmds;
 pub use cmd::channel_cmds;
 pub use cmd::color_cmds;
 pub use cmd::color_to_alpha_cmds;
+pub use cmd::comfy_cmds;
 pub use cmd::comps_cmds;
 pub use cmd::contour_lib_cmds;
 pub use cmd::cutout_cmds;
@@ -255,6 +256,8 @@ pub struct Session {
     pub prefs: prefs::PrefsStore,
     /// Release checks use an injected platform transport; no network I/O in the engine.
     pub updates: updates_cmds::Updates,
+    /// The ComfyUI bridge (`ai.comfyui.*`): an injected HTTP transport, like the release check.
+    pub comfy: comfy_cmds::Comfy,
     /// Edit menu state: Fade source, custom shape library (see `edit_menu_cmds`).
     pub edit_state: edit_menu_cmds::EditState,
     /// The pattern library (Window › Patterns; see `pattern.*`).
