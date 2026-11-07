@@ -414,6 +414,23 @@ fn sides_of_samplers(obj: &Map<String, Value>) -> (Vec<String>, Vec<String>) {
     (negative, positive)
 }
 
+/// The nodes holding a string prompt input for an API-style image node (OpenAI-compatible
+/// `prompt`, the Chinese `提示词`), smallest id first: the fallback [`inject`] writes into when
+/// the graph has no text encodes, and [`analyze`] lists for the panel.
+fn prompt_input_nodes(obj: &Map<String, Value>) -> Vec<String> {
+    let mut hits: Vec<String> = obj
+        .iter()
+        .filter(|(_, n)| {
+            n.get("inputs")
+                .and_then(Value::as_object)
+                .is_some_and(|i| i.iter().any(|(k, v)| (k == "prompt" || k == "提示词") && v.is_string()))
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    hits.sort_by_key(|id| id.parse::<u64>().unwrap_or(u64::MAX));
+    hits
+}
+
 
 /// What [`inject`] touched, echoed back so the panel can show it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -436,7 +453,9 @@ impl Injected {
 /// Fill a converted or exported API-format workflow with this run's values: the prompt into the
 /// text encodes (the ones feeding a sampler's negative side get the negative), the seed and
 /// optional steps into every sampler, and the uploaded image name into the first LoadImage
-/// (further LoadImages keep their own references — multi-reference workflows).
+/// (further LoadImages keep their own references — multi-reference workflows). A graph with no
+/// text encodes (API-style image nodes) falls back to the first `prompt`/`提示词` string input;
+/// there an empty box leaves the workflow's own value in place.
 pub fn inject(workflow: &mut Value, prompt: &str, negative: &str, image: Option<&str>, seed: u64, steps: Option<u32>) -> Injected {
     let mut injected = Injected::default();
     let Some(obj) = workflow.as_object_mut() else { return injected };
@@ -465,6 +484,28 @@ pub fn inject(workflow: &mut Value, prompt: &str, negative: &str, image: Option<
             injected.negative_nodes.push(id.clone());
         } else {
             injected.prompt_nodes.push(id.clone());
+        }
+    }
+    // The fallback for graphs with no text encodes: an API-style image node's own `prompt` /
+    // `提示词` input (a string — a wired one is a link and stays untouched) on the smallest-id
+    // node holding it. An empty prompt or negative leaves the workflow's baked-in value, so
+    // importing a ready-made graph and running it as-is still works.
+    if injected.prompt_nodes.is_empty()
+        && !prompt.trim().is_empty()
+        && let Some(id) = prompt_input_nodes(obj).into_iter().next()
+        && let Some(n) = obj.get_mut(&id)
+        && let Some(inputs) = n.get_mut("inputs").and_then(Value::as_object_mut)
+    {
+        for (k, v) in inputs.iter_mut() {
+            if v.is_string() {
+                if k == "prompt" || k == "提示词" {
+                    *v = json!(prompt);
+                    injected.prompt_nodes.push(id.clone());
+                } else if !negative.trim().is_empty() && (k == "negative_prompt" || k == "负面提示词") {
+                    *v = json!(negative);
+                    injected.negative_nodes.push(id.clone());
+                }
+            }
         }
     }
     for id in &injected.sampler_nodes {
@@ -516,6 +557,11 @@ pub fn analyze(workflow: &Value) -> Value {
             if obj.get(&id).and_then(|n| n.pointer("/inputs/text")).is_some() {
                 prompt_nodes.push(id);
             }
+        }
+        // API-style graphs without text encodes: their `prompt`/`提示词` input is the prompt
+        // target (the panel's "prompt → N" must count it).
+        if prompt_nodes.is_empty() {
+            prompt_nodes = prompt_input_nodes(obj);
         }
     }
     let obj = workflow.as_object().map(|o| o.len()).unwrap_or(0);
@@ -782,22 +828,50 @@ fn fill_params(p: &Value) -> Result<FillParams> {
     })
 }
 
-/// The document to send for `source`, as PNG bytes: the composite, the active layer alone, or
-/// the selection's crop.
-fn source_png(doc: &Document, source: FillSource, active: Option<LayerId>) -> Result<Vec<u8>> {
+/// The upload cap: image-edit endpoints — and the relays in front of them — time out on
+/// tens-of-megapixel uploads (a 45 MP composite came back HTTP 524 after two minutes). A source
+/// at 2048 px on the long edge stays inside their budget; [`place_result_layer`] scales whatever
+/// comes back to cover the canvas again.
+const UPLOAD_MAX_EDGE: u32 = 2048;
+
+/// `doc` flattened to PNG for upload, downscaled on the long edge when it exceeds
+/// [`UPLOAD_MAX_EDGE`]: the bytes plus the pixel size actually sent.
+pub(crate) fn upload_png(doc: &Document, name: &str) -> Result<(Vec<u8>, u32, u32)> {
     let export = |d: &Document| {
-        photocraft_io::export(d, "photocraft.png", &photocraft_io::ExportOptions::default())
+        photocraft_io::export(d, name, &photocraft_io::ExportOptions::default())
             .map(|r| r.bytes)
             .map_err(|e| EngineError::Other(format!("encoding the source image: {e}")))
     };
+    let long = doc.size.width.max(doc.size.height);
+    let k = f64::from(UPLOAD_MAX_EDGE) / f64::from(long.max(1));
+    if k >= 1.0 {
+        return export(doc).map(|bytes| (bytes, doc.size.width, doc.size.height));
+    }
+    let px = photocraft_compose::composite_to_surface(doc, doc.bounds(), doc.pixel_format(), None);
+    // `content_bounds` (what `resize` scales too), not `tile_bounds`: tiles are 256-aligned and
+    // would pad the sent image with blank rows. A fully blank composite has no content to scale.
+    if px.content_bounds().is_empty() {
+        return export(doc).map(|bytes| (bytes, doc.size.width, doc.size.height));
+    }
+    let px = resize_surface(&px, k, k, Resample::Bicubic);
+    let b = px.content_bounds();
+    let mut d = Document::new("upload", Size::new(b.width(), b.height()), doc.mode, doc.depth);
+    d.insert_above(None, Layer::new("upload", LayerContent::Raster(px)));
+    export(&d).map(|bytes| (bytes, d.size.width, d.size.height))
+}
+
+/// The document to send for `source`, as PNG bytes: the composite, the active layer alone, or
+/// the selection's crop — each downscaled to [`UPLOAD_MAX_EDGE`] on the long edge by
+/// [`upload_png`].
+fn source_png(doc: &Document, source: FillSource, active: Option<LayerId>) -> Result<Vec<u8>> {
     match source {
-        FillSource::Canvas => export(doc),
+        FillSource::Canvas => upload_png(doc, "photocraft.png").map(|(bytes, _, _)| bytes),
         FillSource::Layer => {
             let id = active.ok_or_else(|| bad("ai.comfyui.fill", "`source` \"layer\" needs an active layer"))?;
             let layer = doc.layer(id).ok_or(EngineError::NoLayer(id))?;
             let mut d = Document::new("layer", doc.size, doc.mode, doc.depth);
             d.insert_above(None, layer.duplicate());
-            export(&d)
+            upload_png(&d, "photocraft.png").map(|(bytes, _, _)| bytes)
         }
         FillSource::Selection => {
             let sel = doc.selection.as_ref().ok_or_else(|| bad("ai.comfyui.fill", "`source` \"selection\" needs a selection; make one, or use \"canvas\""))?;
@@ -810,7 +884,7 @@ fn source_png(doc: &Document, source: FillSource, active: Option<LayerId>) -> Re
             let px = translate_surface(&px, -area.x0, -area.y0);
             let mut d = Document::new("selection", Size::new(area.width(), area.height()), doc.mode, doc.depth);
             d.insert_above(None, Layer::new("source", LayerContent::Raster(px)));
-            export(&d)
+            upload_png(&d, "photocraft.png").map(|(bytes, _, _)| bytes)
         }
     }
 }
@@ -1011,7 +1085,7 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Generate (ComfyUI)…",
             menu: &["File"],
             shortcut: None,
-            params: r#"{"prompt":text,"negative":text,"workflow":text,"source":"canvas|layer|selection"="canvas","seed":int=-1,"steps":1..150,"place":"none|layer|document"="none","timeout":10..3600=600,"url":text} (generate through a stored ComfyUI workflow (ai.comfyui.workflows.list/import): uploads the composite, the active layer, or the selection's crop, writes prompt/negative into the text encodes, seed/steps into the samplers and the upload into the first LoadImage; the generated images land on the result shelf (place "none"), or directly as a selection-masked layer / their own documents; with a selection, placed layers are masked to it so any workflow does local edits)"#,
+            params: r#"{"prompt":text,"negative":text,"workflow":text,"source":"canvas|layer|selection"="canvas","seed":int=-1,"steps":1..150,"place":"none|layer|document"="none","timeout":10..3600=600,"url":text} (generate through a stored ComfyUI workflow (ai.comfyui.workflows.list/import): uploads the composite, the active layer, or the selection's crop, downscaled to 2048 px on the long edge first; writes prompt/negative into the text encodes — or, in a graph with none, into its `prompt`/`提示词` input, an empty prompt keeping the workflow's own value — and the upload into the first LoadImage; the generated images land on the result shelf (place "none"), or directly as a selection-masked layer / their own documents; with a selection, placed layers are masked to it so any workflow does local edits)"#,
             enabled: enabled_with_doc,
             run: fill,
             journal: true,
@@ -1264,6 +1338,7 @@ mod tests {
 
     thread_local! {
         static CALLS: std::cell::RefCell<Vec<(&'static str, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+        static UPLOADS: std::cell::RefCell<Vec<Vec<u8>>> = const { std::cell::RefCell::new(Vec::new()) };
     }
 
     /// A transport that answers like ComfyUI, recording the upload name and queued workflow.
@@ -1271,8 +1346,9 @@ mod tests {
         let png = test_png();
         std::sync::Arc::new(move |req: &ComfyRequest| match &req.call {
             ComfyCall::ObjectInfo => Ok(ComfyReply::Json(object_info_fixture())),
-            ComfyCall::Upload { name, .. } => {
+            ComfyCall::Upload { name, bytes } => {
                 CALLS.with(|c| c.borrow_mut().push(("upload", name.clone())));
+                UPLOADS.with(|u| u.borrow_mut().push(bytes.clone()));
                 Ok(ComfyReply::Json(json!({"name": name, "subfolder": ""})))
             }
             ComfyCall::Queue { workflow, .. } => {
@@ -1306,6 +1382,60 @@ mod tests {
 
     fn last_queued() -> Value {
         CALLS.with(|c| c.borrow().iter().rev().find(|(k, _)| *k == "queue").map(|(_, v)| serde_json::from_str(v).unwrap()).unwrap())
+    }
+
+    fn last_upload() -> Option<Vec<u8>> {
+        UPLOADS.with(|u| u.borrow().last().cloned())
+    }
+
+    #[test]
+    fn inject_falls_back_to_prompt_inputs_without_text_encodes() {
+        // An API-style graph (the Xin OpenAI node): no text encodes, the prompt lives in 提示词.
+        let mut wf = json!({
+            "360": {"class_type": "LoadImage", "inputs": {"image": "a.png"}},
+            "374": {"class_type": "OpenAPIImage", "inputs": {"提示词": "文件里烧好的提示词", "随机种": 7}},
+        });
+        let injected = inject(&mut wf, "漫展室内展馆背景", "", None, 9, None);
+        assert_eq!(injected.prompt_nodes, ["374"]);
+        assert_eq!(wf.pointer("/374/inputs/提示词"), Some(&json!("漫展室内展馆背景")));
+        // analyze lists it for the panel's "prompt → N" line.
+        assert_eq!(analyze(&wf)["promptNodes"], json!(["374"]));
+        // An empty prompt keeps the workflow's own value: running an imported graph as-is works.
+        let injected = inject(&mut wf, "", "", None, 9, None);
+        assert!(injected.prompt_nodes.is_empty());
+        assert_eq!(wf.pointer("/374/inputs/提示词"), Some(&json!("漫展室内展馆背景")));
+        // English `prompt` with `negative_prompt` on the same node; a wired `prompt` stays a link.
+        let mut wf = json!({
+            "1": {"class_type": "Node", "inputs": {"prompt": "p0", "negative_prompt": ""}},
+            "2": {"class_type": "Node", "inputs": {"prompt": ["1", 0]}},
+        });
+        let injected = inject(&mut wf, "new", "blurry", None, 9, None);
+        assert_eq!(injected.prompt_nodes, ["1"]);
+        assert_eq!(injected.negative_nodes, ["1"]);
+        assert_eq!(wf.pointer("/1/inputs/prompt"), Some(&json!("new")));
+        assert_eq!(wf.pointer("/1/inputs/negative_prompt"), Some(&json!("blurry")));
+        assert_eq!(wf.pointer("/2/inputs/prompt"), Some(&json!(["1", 0])));
+    }
+
+    #[test]
+    fn fill_caps_oversized_uploads_and_keeps_small_ones() {
+        // A tens-of-megapixel composite is what times out image-edit endpoints (HTTP 524 on the
+        // relay): the upload is downscaled to 2048 px on the long edge first.
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 3000, "height": 2000, "background": "white"})).unwrap();
+        s.comfy.transport = Some(mock_transport());
+        s.execute("ai.comfyui.fill", json!({"workflow": "FLUX.3 Klein Image Edit", "prompt": "p", "place": "none"})).unwrap();
+        let bytes = last_upload().expect("an upload happened");
+        let sent = photocraft_io::import("upload.png", &bytes).unwrap().document.size;
+        assert!((2047u32..=2049).contains(&sent.width), "{}x{}", sent.width, sent.height);
+        assert!(sent.height <= 1366, "{}x{}", sent.width, sent.height);
+        // A small document is uploaded as-is.
+        let fmt = PixelFormat::new(ColorMode::Rgb, SampleType::U8, false);
+        let surface = Surface::from_interleaved(fmt, Rect::new(0, 0, 64, 64), &[255; 64 * 64 * 3]);
+        let mut d = Document::new("t", Size::new(64, 64), ColorMode::Rgb, SampleType::U8);
+        d.insert_above(None, Layer::new("l", LayerContent::Raster(surface)));
+        let (_, w, h) = upload_png(&d, "photocraft.png").unwrap();
+        assert_eq!((w, h), (64, 64));
     }
 
     #[test]

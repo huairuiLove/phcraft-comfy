@@ -707,14 +707,12 @@ fn run_generation(
                 Mode::Text => Latent::Empty { width: p.width, height: p.height },
                 Mode::Image => {
                     let doc = doc.ok_or_else(|| bad("ai.comfyui.generate", "`mode` \"image\" needs an open document to send; use \"text\""))?;
-                    let (w, h) = (snap_to(doc.size.width, multiple), snap_to(doc.size.height, multiple));
+                    ctx.progress(0.08, "Uploading the document…");
+                    let (png, uw, uh) = super::comfy_workflow_cmds::upload_png(doc, "photocraft.png")?;
+                    let (w, h) = (snap_to(uw, multiple), snap_to(uh, multiple));
                     if w == 0 || h == 0 {
                         return Err(bad("ai.comfyui.generate", format!("the {} × {} document is smaller than one {multiple}×{multiple} latent tile", doc.size.width, doc.size.height)));
                     }
-                    ctx.progress(0.08, "Uploading the document…");
-                    let png = photocraft_io::export(doc, "photocraft.png", &photocraft_io::ExportOptions::default())
-                        .map_err(|e| at("encoding the document as PNG", e.to_string()))?
-                        .bytes;
                     let name = format!("photocraft-{}.png", now_millis());
                     let v = json_of(call(ComfyCall::Upload { name: name.clone(), bytes: png }).map_err(|e| at("uploading the source image", e))?)?;
                     let uploaded = uploaded_name(&v).unwrap_or(name);
