@@ -462,6 +462,9 @@ pub struct Services {
     /// Where `ai.comfyui.workflows.*` stores imported workflows (the config dir's
     /// `comfy_workflows` folder; desktop only).
     pub comfy_workflows_dir: Option<std::path::PathBuf>,
+    /// Where `ai.comfyui.fill` results persist as PNGs (the config dir's `Generations` folder;
+    /// desktop only). Restored onto the result shelf at startup.
+    pub comfy_generations_dir: Option<std::path::PathBuf>,
     /// Files delivered asynchronously (web drag-and-drop): drained every frame and opened as
     /// documents.
     pub inbox: Option<Inbox>,

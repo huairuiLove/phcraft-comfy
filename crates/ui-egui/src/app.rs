@@ -37,6 +37,8 @@ impl PhotocraftApp {
         session.updates.check = services.check_updates.take();
         session.comfy.transport = services.comfy_transport.take();
         session.comfy.workflows_dir = services.comfy_workflows_dir.take();
+        session.comfy.generations_dir = services.comfy_generations_dir.take();
+        session.comfy.restore_results();
         let mut app = Self {
             session,
             ui: UiState::default(),

@@ -45,6 +45,9 @@ pub struct ComfyPanelState {
     pub template_on: std::collections::BTreeMap<String, bool>,
     /// Template choice label → the picked value's label ("": none).
     pub template_pick: std::collections::BTreeMap<String, String>,
+    /// The user's edited full prompt; empty: send the live composition of description and
+    /// template phrases, non-empty: send exactly this text.
+    pub full_prompt: String,
 }
 
 impl Default for ComfyPanelState {
@@ -61,6 +64,7 @@ impl Default for ComfyPanelState {
             template: String::new(),
             template_on: std::collections::BTreeMap::new(),
             template_pick: std::collections::BTreeMap::new(),
+            full_prompt: String::new(),
         }
     }
 }
@@ -255,7 +259,7 @@ fn phrase_text(state: &ComfyPanelState, p: &Phrase) -> String {
         .unwrap_or_default()
 }
 
-/// The full prompt this run sends: the user's own words first, then the template's phrases.
+/// The live composition of the moment: the user's own words first, then the template's phrases.
 pub fn compose_prompt(state: &ComfyPanelState) -> String {
     let mut parts: Vec<String> = Vec::new();
     if !state.prompt.trim().is_empty() {
@@ -272,6 +276,16 @@ pub fn compose_prompt(state: &ComfyPanelState) -> String {
     parts.join(", ")
 }
 
+/// The prompt a run actually sends: the edited full prompt when the panel holds one (the user
+/// typed their own version into the Full prompt box), else the live composition.
+pub fn effective_prompt(state: &ComfyPanelState) -> String {
+    if state.full_prompt.trim().is_empty() {
+        compose_prompt(state)
+    } else {
+        state.full_prompt.trim().to_string()
+    }
+}
+
 /// Enqueue `batch` tasks from the current options.
 fn add_to_queue(app: &mut PhotocraftApp) {
     let p = app.ui.comfy_panel.clone();
@@ -285,7 +299,7 @@ fn add_to_queue(app: &mut PhotocraftApp) {
         };
         app.comfy_queue.tasks.push(QueueTask {
             state: "waiting".into(),
-            prompt: compose_prompt(&p),
+            prompt: effective_prompt(&p),
             workflow: p.workflow.clone(),
             source: p.source.clone(),
             place: p.place.clone(),
@@ -592,11 +606,34 @@ fn prompt(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         app.ui.comfy_panel.template_pick = p.template_pick.clone();
         persist_options(app);
     }
-    let full = compose_prompt(&p);
-    let used = template_phrases(&p.template).map(|ph| ph.iter().filter(|ph| !phrase_text(&p, ph).is_empty()).count()).unwrap_or(0);
-    ui.label(egui::RichText::new(format!("Full prompt ({used} template phrases)")).small().strong());
-    let mut show = full;
-    ui.add(egui::TextEdit::multiline(&mut show).interactive(false).desired_rows(3).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+    // The full prompt as it will be sent: the live composition, or — once the user types in the
+    // box — their own edited version, which then stays until reset (template changes stop
+    // rewriting it; clearing the box, restoring the composed text, or Reset returns to live).
+    let composed = compose_prompt(&p);
+    let edited = !p.full_prompt.trim().is_empty();
+    let mut show = if edited { p.full_prompt.clone() } else { composed.clone() };
+    ui.horizontal(|ui| {
+        if edited {
+            ui.label(egui::RichText::new("Full prompt · edited (sent as typed)").small().strong());
+            if ui.small_button("Reset").clicked() {
+                app.ui.comfy_panel.full_prompt.clear();
+                persist_options(app);
+            }
+        } else {
+            let used = template_phrases(&p.template).map(|ph| ph.iter().filter(|ph| !phrase_text(&p, ph).is_empty()).count()).unwrap_or(0);
+            ui.label(egui::RichText::new(format!("Full prompt ({used} template phrases) — editable")).small().strong());
+        }
+    });
+    let r = egui::TextEdit::multiline(&mut show).desired_rows(3).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace).show(ui);
+    if r.response.changed() {
+        // Back to the composition when the edit matches it or the box is emptied.
+        app.ui.comfy_panel.full_prompt = if show.trim().is_empty() || show.trim() == composed {
+            String::new()
+        } else {
+            show.clone()
+        };
+        persist_options(app);
+    }
 }
 
 // ---- parameters and enqueue
@@ -634,7 +671,12 @@ fn params(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("Results");
         craft_ui::ComboBox::from_id_salt("comfy-place").selected_text(place_label(&p.place)).show_ui(ui, |ui| {
-            for (key, label) in [("none", "Stay in the panel"), ("layer", "Place as layer (masked)"), ("document", "Open as documents")] {
+            for (key, label) in [
+                ("none", "Stay in the panel"),
+                ("layer", "Place as layer (masked)"),
+                ("native", "Place as layer (full size)"),
+                ("document", "Open as documents"),
+            ] {
                 ui.selectable_value(&mut p.place, key.to_string(), label).clicked();
             }
         });
@@ -659,6 +701,7 @@ fn params(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 fn place_label(place: &str) -> String {
     match place {
         "layer" => "Place as layer (masked)".to_string(),
+        "native" => "Place as layer (full size)".to_string(),
         "document" => "Open as documents".to_string(),
         _ => "Stay in the panel".to_string(),
     }
@@ -738,7 +781,13 @@ fn gallery(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     if shelf.is_empty() {
         return;
     }
-    ui.strong("Results");
+    ui.horizontal(|ui| {
+        ui.strong("Results");
+        if ui.small_button("Clear").clicked() {
+            let _ = app.run("ai.comfyui.results.remove", json!({"all": true}));
+            app.comfy_queue.thumbs.clear();
+        }
+    });
     // Newest first, the newest eight.
     for (i, created, seed, workflow) in shelf.iter().rev().take(8) {
         let key = (*created, *seed);
@@ -762,6 +811,12 @@ fn gallery(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         app_.ui.status = e;
                         app_.ui.status_error = true;
                     }
+                    if ui.small_button("Full Size").clicked()
+                        && let Err(e) = app_.run("ai.comfyui.place", json!({"result": i, "as": "native"}))
+                    {
+                        app_.ui.status = e;
+                        app_.ui.status_error = true;
+                    }
                     if ui.small_button("New Doc").clicked()
                         && let Err(e) = app_.run("ai.comfyui.place", json!({"result": i, "as": "document"}))
                     {
@@ -773,6 +828,18 @@ fn gallery(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         let _ = app_.pick_save(&format!("comfyui-{seed}.png"), move |app, path| {
                             app.run("ai.comfyui.save", json!({"result": idx, "path": path})).map_err(|e| e.to_string())
                         });
+                    }
+                    // Drops the result and deletes its persisted PNG; the thumbnail goes with it.
+                    if ui.small_button("✕").clicked() {
+                        match app_.run("ai.comfyui.results.remove", json!({"result": i})) {
+                            Ok(_) => {
+                                app_.comfy_queue.thumbs.remove(&key);
+                            }
+                            Err(e) => {
+                                app_.ui.status = e;
+                                app_.ui.status_error = true;
+                            }
+                        }
                     }
                 });
             });
@@ -876,6 +943,24 @@ mod tests {
     }
 
     #[test]
+    fn edited_full_prompt_is_sent_verbatim() {
+        let mut s = state("fill", "add a red rose to her hair");
+        // An edited full prompt replaces the composition exactly as typed.
+        s.full_prompt = "漫展室内展馆背景，柔和粉调柔光, strictly keep the person unchanged".into();
+        assert_eq!(effective_prompt(&s), s.full_prompt);
+        // The composition is untouched underneath; the empty override sends it again.
+        assert!(compose_prompt(&s).contains("keep the original background"));
+        s.full_prompt = String::new();
+        assert_eq!(effective_prompt(&s), compose_prompt(&s));
+        // Whitespace-only counts as no override.
+        s.full_prompt = "   ".into();
+        assert_eq!(effective_prompt(&s), compose_prompt(&s));
+        // The override is sent trimmed, like the composition's own parts.
+        s.full_prompt = "  exact words  ".into();
+        assert_eq!(effective_prompt(&s), "exact words");
+    }
+
+    #[test]
     fn old_panel_state_without_template_fields_loads() {
         let old = serde_json::json!({"prompt": "p", "batch": 4});
         let s: ComfyPanelState = serde_json::from_value(old).unwrap();
@@ -886,5 +971,18 @@ mod tests {
         s.template_pick.insert("焦段".into(), "50mm 标准".into());
         let back: ComfyPanelState = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn old_panel_state_without_full_prompt_loads_and_round_trips() {
+        // A state saved before the editable full prompt has no `fullPrompt`; it must load as
+        // "send the live composition".
+        let old = serde_json::json!({"prompt": "p", "template": "fill"});
+        let s: ComfyPanelState = serde_json::from_value(old).unwrap();
+        assert!(s.full_prompt.is_empty());
+        let mut s = state("fill", "snow");
+        s.full_prompt = "typed verbatim".into();
+        let back: ComfyPanelState = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
+        assert_eq!(back.full_prompt, "typed verbatim");
     }
 }

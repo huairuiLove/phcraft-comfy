@@ -74,6 +74,10 @@ pub struct Comfy {
     /// Where `ai.comfyui.workflows.*` keeps imported workflows: the platform config directory's
     /// `comfy_workflows` folder, set by the desktop shell (`None` on the web and headless).
     pub workflows_dir: Option<std::path::PathBuf>,
+    /// Where `ai.comfyui.fill` results persist as PNGs (`index.json` alongside): the platform
+    /// config directory's `Generations` folder, set by the desktop shell (`None` on the web and
+    /// headless — the shelf stays in memory only). See `Comfy::restore_results`.
+    pub generations_dir: Option<std::path::PathBuf>,
     /// The results of recent `ai.comfyui.fill` runs (the panel's gallery): each can be placed as
     /// a layer or saved to a file after the fact. Bounded by [`RESULT_LIMIT`]/[`RESULT_BYTES_MAX`].
     pub results: Vec<crate::cmd::comfy_workflow_cmds::StoredResult>,

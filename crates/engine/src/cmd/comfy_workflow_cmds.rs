@@ -12,7 +12,7 @@
 //! itself is serial), and the user decides per image, after seeing it, whether it lands.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use photocraft_algo::resample::{Resample, resize_surface, translate_surface};
 use photocraft_doc::{Document, Layer, LayerContent, LayerId, LayerMask};
@@ -39,7 +39,8 @@ const RESULT_BYTES_MAX: u64 = 512 * 1024 * 1024;
 
 /// One generated image kept after `ai.comfyui.fill`: its bytes plus what to reproduce and where
 /// it came from. `selection` is the snapshot taken when it was generated, so placing it as a
-/// layer is right even if the user has re-selected since.
+/// layer is right even if the user has re-selected since. `file` is where the bytes persist in
+/// the generations folder (`None` when there is none, or in the web build).
 pub struct StoredResult {
     pub bytes: Vec<u8>,
     pub seed: u64,
@@ -47,19 +48,118 @@ pub struct StoredResult {
     pub workflow: String,
     pub selection: Option<Surface>,
     pub created_ms: u64,
+    pub file: Option<PathBuf>,
 }
 
-fn push_result(s: &mut Session, r: StoredResult) -> usize {
+impl super::comfy_cmds::Comfy {
+    /// Reload the persisted shelf at startup: newest first under the same bounds as the live
+    /// shelf ([`RESULT_LIMIT`] entries, [`RESULT_BYTES_MAX`] bytes); older files stay on disk for
+    /// when the newer ones are removed. The selection snapshot is not persisted — a restored
+    /// result places without a mask.
+    pub fn restore_results(&mut self) {
+        let Some(dir) = self.generations_dir.clone() else { return };
+        let entries = read_index(&dir);
+        // Walk newest first, stop at the shelf bounds, then insert oldest first so the shelf
+        // order matches the order they were generated in.
+        let mut picked: Vec<&Value> = Vec::new();
+        let mut total = 0u64;
+        for e in entries.iter().rev() {
+            let Some(name) = e.get("file").and_then(Value::as_str).filter(|n| safe_generation_name(n)) else { continue };
+            let Ok(meta) = std::fs::metadata(dir.join(name)) else { continue };
+            if picked.len() >= RESULT_LIMIT || total + meta.len() > RESULT_BYTES_MAX {
+                break;
+            }
+            total += meta.len();
+            picked.push(e);
+        }
+        for e in picked.into_iter().rev() {
+            let Some(name) = e.get("file").and_then(Value::as_str).filter(|n| safe_generation_name(n)) else { continue };
+            let path = dir.join(name);
+            let Ok(bytes) = photocraft_format::read_file(&path) else { continue };
+            self.results.push(StoredResult {
+                bytes,
+                seed: e.get("seed").and_then(Value::as_u64).unwrap_or(0),
+                prompt: e.get("prompt").and_then(Value::as_str).unwrap_or("").to_string(),
+                workflow: e.get("workflow").and_then(Value::as_str).unwrap_or("").to_string(),
+                selection: None,
+                created_ms: e.get("createdMs").and_then(Value::as_u64).unwrap_or(0),
+                file: Some(path),
+            });
+        }
+    }
+}
+
+/// A persisted PNG's name: `<created_ms>-<seed>.png`, `-N` before the extension on collision.
+/// Timestamped, so the folder sorts oldest first like the shelf does.
+fn persist_result(dir: &std::path::Path, r: &StoredResult) -> Option<PathBuf> {
+    if std::fs::create_dir_all(dir).is_err() {
+        return None;
+    }
+    let mut path = dir.join(format!("{}-{}.png", r.created_ms, r.seed));
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("{}-{}-{}.png", r.created_ms, r.seed, n));
+        n += 1;
+    }
+    photocraft_format::atomic_write(&path, &r.bytes).ok()?;
+    Some(path)
+}
+
+/// Rewrite `index.json` from the shelf: one entry per result, in shelf order. The PNGs and the
+/// index together mirror the shelf exactly (evictions and removals delete their file).
+fn write_index(comfy: &super::comfy_cmds::Comfy) {
+    let Some(dir) = &comfy.generations_dir else { return };
+    let entries: Vec<Value> = comfy
+        .results
+        .iter()
+        .map(|r| {
+            json!({
+                "file": r.file.as_ref().and_then(|p| p.file_name()).and_then(|n| n.to_str()),
+                "seed": r.seed,
+                "prompt": r.prompt,
+                "workflow": r.workflow,
+                "createdMs": r.created_ms,
+            })
+        })
+        .collect();
+    let Ok(text) = serde_json::to_vec_pretty(&entries) else { return };
+    let _ = photocraft_format::atomic_write(&dir.join("index.json"), &text);
+}
+
+/// `index.json` as written by [`write_index`]; an unreadable or malformed file restores nothing.
+fn read_index(dir: &std::path::Path) -> Vec<Value> {
+    let Ok(bytes) = photocraft_format::read_file(&dir.join("index.json")) else { return Vec::new() };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+/// A persisted name we will restore: digits, dashes and `.png` only, so an edited index cannot
+/// point outside the generations folder.
+fn safe_generation_name(name: &str) -> bool {
+    name.len() < 100
+        && name.ends_with(".png")
+        && name[..name.len() - 4].bytes().all(|b| b.is_ascii_digit() || b == b'-')
+        && name[..name.len() - 4].contains('-')
+}
+
+fn remove_file_quiet(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+fn push_result(s: &mut Session, mut r: StoredResult) -> usize {
+    r.file = s.comfy.generations_dir.as_deref().and_then(|dir| persist_result(dir, &r));
     let results = &mut s.comfy.results;
     results.push(r);
-    // Bound the shelf: oldest first out, then never over the byte budget.
+    // Bound the shelf: oldest first out (their persisted file goes too), then never over the
+    // byte budget.
     while results.len() > RESULT_LIMIT {
-        results.remove(0);
+        remove_file_quiet(results.remove(0).file.as_deref().unwrap_or(Path::new("")));
     }
     while results.len() > 1 && results.iter().map(|r| r.bytes.len() as u64).sum::<u64>() > RESULT_BYTES_MAX {
-        results.remove(0);
+        remove_file_quiet(results.remove(0).file.as_deref().unwrap_or(Path::new("")));
     }
-    results.len() - 1
+    let last = results.len() - 1;
+    write_index(&s.comfy);
+    last
 }
 
 // ------------------------------------------------------------------ UI-format conversion
@@ -768,6 +868,9 @@ pub enum FillPlace {
     None,
     /// Place each as a layer above the active one, masked to the selection.
     Layer,
+    /// Place each at its native resolution: no cover scaling — a result larger than the canvas
+    /// grows the canvas (centred) to fit, a smaller one is centred as-is.
+    Native,
     /// Open each as its own document.
     Document,
 }
@@ -777,8 +880,9 @@ impl FillPlace {
         match v {
             None | Some("none") => Ok(FillPlace::None),
             Some("layer") => Ok(FillPlace::Layer),
+            Some("native") => Ok(FillPlace::Native),
             Some("document") => Ok(FillPlace::Document),
-            Some(other) => Err(bad("ai.comfyui.fill", format!("`place` must be \"none\", \"layer\" or \"document\", not \"{other}\""))),
+            Some(other) => Err(bad("ai.comfyui.fill", format!("`place` must be \"none\", \"layer\", \"native\" or \"document\", not \"{other}\""))),
         }
     }
 }
@@ -830,9 +934,10 @@ fn fill_params(p: &Value) -> Result<FillParams> {
 
 /// The upload cap: image-edit endpoints — and the relays in front of them — time out on
 /// tens-of-megapixel uploads (a 45 MP composite came back HTTP 524 after two minutes). A source
-/// at 2048 px on the long edge stays inside their budget; [`place_result_layer`] scales whatever
-/// comes back to cover the canvas again.
-const UPLOAD_MAX_EDGE: u32 = 2048;
+/// at 3072 px on the long edge (~9 MP at 1:1) stays inside that budget while keeping enough
+/// fidelity for a 2K-generation to place at its native size; [`place_result_layer`] scales
+/// whatever comes back to cover the canvas again, and [`place_result_native`] keeps its pixels.
+const UPLOAD_MAX_EDGE: u32 = 3072;
 
 /// `doc` flattened to PNG for upload, downscaled on the long edge when it exceeds
 /// [`UPLOAD_MAX_EDGE`]: the bytes plus the pixel size actually sent.
@@ -949,7 +1054,7 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
             for bytes in outcome.generation.images {
                 indices.push(push_result(
                     s,
-                    StoredResult { bytes, seed: outcome.seed, prompt: outcome.prompt.clone(), workflow: outcome.workflow.clone(), selection: selection.clone(), created_ms: created },
+                    StoredResult { bytes, seed: outcome.seed, prompt: outcome.prompt.clone(), workflow: outcome.workflow.clone(), selection: selection.clone(), created_ms: created, file: None },
                 ));
             }
             let shelf: Vec<(Vec<u8>, u64, Option<Surface>)> = indices
@@ -966,6 +1071,11 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
                         placed.push(place_result_layer(s, bytes, selection.as_ref())?);
                     }
                 }
+                FillPlace::Native => {
+                    for (bytes, _, selection) in &shelf {
+                        placed.push(place_result_native(s, bytes, selection.as_ref())?);
+                    }
+                }
                 FillPlace::Document => {
                     for (bytes, seed, _) in &shelf {
                         placed.push(crate::cmd::file_cmds::open_bytes_as(s, &format!("ComfyUI {seed}.png"), bytes, None, None)?);
@@ -974,7 +1084,7 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
                 FillPlace::None => {}
             }
             Ok(json!({
-                "results": indices, "placed": placed, "place": match place { FillPlace::None => "none", FillPlace::Layer => "layer", FillPlace::Document => "document" },
+                "results": indices, "placed": placed, "place": match place { FillPlace::None => "none", FillPlace::Layer => "layer", FillPlace::Native => "native", FillPlace::Document => "document" },
                 "seed": outcome.seed, "seconds": outcome.generation.waited_ms / 1000,
                 "promptId": outcome.generation.prompt_id, "injected": outcome.injected.to_json(),
             }))
@@ -1022,13 +1132,52 @@ fn place_result_layer(s: &mut Session, bytes: &[u8], selection: Option<&Surface>
     })
 }
 
+/// Put a generated image onto the canvas at its **native resolution**: no cover scaling — a
+/// result larger than the canvas grows the canvas (centred) to fit it, a smaller one is centred
+/// as-is. Above the active layer, masked to the selection snapshot it was generated with (note:
+/// the snapshot lines up with a cover-scaled placement, so with a selection it may sit offset
+/// here). Growing the canvas is one history step, the placement another.
+fn place_result_native(s: &mut Session, bytes: &[u8], selection: Option<&Surface>) -> Result<Value> {
+    const CMD: &str = "ai.comfyui.place";
+    let (fmt, cw, ch) = {
+        let d = s.active().ok_or(EngineError::NoDocument)?;
+        (d.doc.pixel_format(), d.doc.size.width, d.doc.size.height)
+    };
+    let imported = photocraft_io::import("ComfyUI Result.png", bytes).map_err(|e| EngineError::Other(format!("the generated image: {e}")))?;
+    let px = crate::cmd::file_cmds::flattened_checked(&imported.document, fmt, CMD)?;
+    let (gw, gh) = (imported.document.size.width, imported.document.size.height);
+    if gw == 0 || gh == 0 {
+        return Err(bad(CMD, "the generated image is empty"));
+    }
+    if gw > cw || gh > ch {
+        // `image.canvasSize` keeps every layer in place relative to the grown canvas.
+        s.execute("image.canvasSize", json!({"width": gw.max(cw), "height": gh.max(ch), "anchor": "center"}))?;
+    }
+    let (cw, ch) = {
+        let d = s.active().ok_or(EngineError::NoDocument)?;
+        (f64::from(d.doc.size.width), f64::from(d.doc.size.height))
+    };
+    let dx = ((cw - f64::from(gw)) / 2.0).round() as i32;
+    let dy = ((ch - f64::from(gh)) / 2.0).round() as i32;
+    let placed = translate_surface(&px, dx, dy);
+    let mask = selection.cloned();
+    s.edit("Place ComfyUI Result (Full Size)", |doc, active| {
+        let mut layer = Layer::new("ComfyUI Result", LayerContent::Raster(placed.clone()));
+        layer.mask = mask.clone().map(|surface| LayerMask { surface, linked: false, ..LayerMask::reveal_all() });
+        let id = doc.insert_above(*active, layer);
+        *active = Some(id);
+        Ok(json!({"layer": id.0, "mask": mask.is_some(), "canvas": [doc.size.width, doc.size.height]}))
+    })
+}
+
 fn place(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "ai.comfyui.place";
     let idx = p.get("result").and_then(Value::as_u64).filter(|v| *v <= RESULT_LIMIT as u64).ok_or_else(|| bad(CMD, "`result` must be a result index from ai.comfyui.fill"))? as usize;
     let as_kind = match p.get("as").and_then(Value::as_str) {
         None | Some("layer") => "layer",
+        Some("native") => "native",
         Some("document") => "document",
-        Some(other) => return Err(bad(CMD, format!("`as` must be \"layer\" or \"document\", not \"{other}\""))),
+        Some(other) => return Err(bad(CMD, format!("`as` must be \"layer\", \"native\" or \"document\", not \"{other}\""))),
     };
     let Some(r) = s.comfy.results.get(idx) else {
         return Err(bad(CMD, format!("result {idx} is gone (the shelf keeps the newest {RESULT_LIMIT})")));
@@ -1036,8 +1185,39 @@ fn place(s: &mut Session, p: &Value) -> Result<Value> {
     let (bytes, seed, selection) = (r.bytes.clone(), r.seed, r.selection.clone());
     match as_kind {
         "document" => crate::cmd::file_cmds::open_bytes_as(s, &format!("ComfyUI {seed}.png"), &bytes, None, None),
+        "native" => place_result_native(s, &bytes, selection.as_ref()),
         _ => place_result_layer(s, &bytes, selection.as_ref()),
     }
+}
+
+/// Drop a shelf result — or the whole shelf — deleting its persisted PNG (if any) alongside.
+fn remove_results(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "ai.comfyui.results.remove";
+    if p.as_object().is_some_and(|o| o.len() > 1) {
+        return Err(bad(CMD, "pass either `result` or `all`"));
+    }
+    if p.get("all").and_then(Value::as_bool) == Some(true) {
+        let mut files = Vec::new();
+        for r in s.comfy.results.drain(..) {
+            if let Some(f) = &r.file {
+                files.push(f.display().to_string());
+                remove_file_quiet(f);
+            }
+        }
+        write_index(&s.comfy);
+        return Ok(json!({"removed": files.len(), "files": files}));
+    }
+    let idx = p.get("result").and_then(Value::as_u64).filter(|v| *v <= RESULT_LIMIT as u64).ok_or_else(|| bad(CMD, "`result` must be a result index from ai.comfyui.fill, or `all`: true"))? as usize;
+    let Some(r) = s.comfy.results.get(idx) else {
+        return Err(bad(CMD, format!("result {idx} is gone (the shelf keeps the newest {RESULT_LIMIT})")));
+    };
+    let file = r.file.clone();
+    s.comfy.results.remove(idx);
+    if let Some(f) = &file {
+        remove_file_quiet(f);
+    }
+    write_index(&s.comfy);
+    Ok(json!({"removed": 1, "files": file.map(|f| vec![f.display().to_string()]).unwrap_or_default()}))
 }
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1085,7 +1265,7 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Generate (ComfyUI)…",
             menu: &["File"],
             shortcut: None,
-            params: r#"{"prompt":text,"negative":text,"workflow":text,"source":"canvas|layer|selection"="canvas","seed":int=-1,"steps":1..150,"place":"none|layer|document"="none","timeout":10..3600=600,"url":text} (generate through a stored ComfyUI workflow (ai.comfyui.workflows.list/import): uploads the composite, the active layer, or the selection's crop, downscaled to 2048 px on the long edge first; writes prompt/negative into the text encodes — or, in a graph with none, into its `prompt`/`提示词` input, an empty prompt keeping the workflow's own value — and the upload into the first LoadImage; the generated images land on the result shelf (place "none"), or directly as a selection-masked layer / their own documents; with a selection, placed layers are masked to it so any workflow does local edits)"#,
+            params: r#"{"prompt":text,"negative":text,"workflow":text,"source":"canvas|layer|selection"="canvas","seed":int=-1,"steps":1..150,"place":"none|layer|native|document"="none","timeout":10..3600=600,"url":text} (generate through a stored ComfyUI workflow (ai.comfyui.workflows.list/import): uploads the composite, the active layer, or the selection's crop, downscaled to 3072 px on the long edge first; writes prompt/negative into the text encodes — or, in a graph with none, into its `prompt`/`提示词` input, an empty prompt keeping the workflow's own value — and the upload into the first LoadImage; the generated images land on the result shelf (place "none"), as selection-masked layers scaled to cover the canvas (place "layer"), at their native resolution with the canvas growing to fit (place "native"), or as their own documents; shelf results persist in the generations folder and survive a restart)"#,
             enabled: enabled_with_doc,
             run: fill,
             journal: true,
@@ -1095,10 +1275,20 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Place ComfyUI Result",
             menu: &[],
             shortcut: None,
-            params: r#"{"result":0..32,"as":"layer|document"="layer"} (put a shelf result onto the canvas: a layer masked to the selection snapshot it was generated with, scaled to cover the canvas, or its own document)"#,
+            params: r#"{"result":0..32,"as":"layer|native|document"="layer"} (put a shelf result onto the canvas: a layer masked to the selection snapshot it was generated with, scaled to cover the canvas; "native" keeps its resolution with the canvas growing to fit; "document" opens it as its own document)"#,
             enabled: enabled_with_doc,
             run: place,
             journal: true,
+        },
+        CommandSpec {
+            id: "ai.comfyui.results.remove",
+            label: "Remove ComfyUI Result",
+            menu: &[],
+            shortcut: None,
+            params: r#"{"result":0..32} | {"all":true} (drop a shelf result — or the whole shelf — from the panel's gallery; its persisted PNG in the generations folder is deleted too)"#,
+            enabled: |_| Ok(()),
+            run: remove_results,
+            journal: false,
         },
         CommandSpec {
             id: "ai.comfyui.save",
@@ -1420,15 +1610,21 @@ mod tests {
     #[test]
     fn fill_caps_oversized_uploads_and_keeps_small_ones() {
         // A tens-of-megapixel composite is what times out image-edit endpoints (HTTP 524 on the
-        // relay): the upload is downscaled to 2048 px on the long edge first.
+        // relay): the upload is downscaled to 3072 px on the long edge first.
         let mut s = Session::new();
-        s.execute("file.new", json!({"width": 3000, "height": 2000, "background": "white"})).unwrap();
+        s.execute("file.new", json!({"width": 4500, "height": 3000, "background": "white"})).unwrap();
         s.comfy.transport = Some(mock_transport());
         s.execute("ai.comfyui.fill", json!({"workflow": "FLUX.3 Klein Image Edit", "prompt": "p", "place": "none"})).unwrap();
         let bytes = last_upload().expect("an upload happened");
         let sent = photocraft_io::import("upload.png", &bytes).unwrap().document.size;
-        assert!((2047u32..=2049).contains(&sent.width), "{}x{}", sent.width, sent.height);
-        assert!(sent.height <= 1366, "{}x{}", sent.width, sent.height);
+        assert!((3071u32..=3073).contains(&sent.width), "{}x{}", sent.width, sent.height);
+        assert!(sent.height <= 2049, "{}x{}", sent.width, sent.height);
+        // A mid-size document (a 2K generation's input) stays inside the cap untouched.
+        s.execute("file.new", json!({"width": 3000, "height": 2000, "background": "white"})).unwrap();
+        s.execute("ai.comfyui.fill", json!({"workflow": "FLUX.3 Klein Image Edit", "prompt": "p", "place": "none"})).unwrap();
+        let bytes = last_upload().expect("an upload happened");
+        let sent = photocraft_io::import("upload.png", &bytes).unwrap().document.size;
+        assert_eq!((sent.width, sent.height), (3000, 2000));
         // A small document is uploaded as-is.
         let fmt = PixelFormat::new(ColorMode::Rgb, SampleType::U8, false);
         let surface = Surface::from_interleaved(fmt, Rect::new(0, 0, 64, 64), &[255; 64 * 64 * 3]);
@@ -1579,5 +1775,102 @@ mod tests {
         assert!(s.execute("ai.comfyui.workflows.remove", json!({"name": "../evil"})).is_err());
         assert!(s.execute("ai.comfyui.workflows.import", json!({"path": 7})).is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fill_place_parses_native() {
+        assert_eq!(FillPlace::parse(Some("native")).unwrap(), FillPlace::Native);
+        assert_eq!(FillPlace::parse(None).unwrap(), FillPlace::None);
+        assert_eq!(FillPlace::parse(Some("layer")).unwrap(), FillPlace::Layer);
+        let e = FillPlace::parse(Some("big")).unwrap_err().to_string();
+        assert!(e.contains("native"), "{e}");
+    }
+
+    /// A solid opaque PNG of any size, as `test_png` is of 4×4.
+    fn solid_png(w: u32, h: u32) -> Vec<u8> {
+        let fmt = PixelFormat::new(ColorMode::Rgb, SampleType::U8, false);
+        let surface = Surface::from_interleaved(fmt, Rect::new(0, 0, w as i32, h as i32), &vec![255; (w * h * 3) as usize]);
+        let mut doc = Document::new("t", Size::new(w, h), ColorMode::Rgb, SampleType::U8);
+        doc.insert_above(None, Layer::new("l", LayerContent::Raster(surface)));
+        photocraft_io::export(&doc, "t.png", &photocraft_io::ExportOptions::default()).unwrap().bytes
+    }
+
+    fn pngs_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")))
+            .collect()
+    }
+
+    #[test]
+    fn place_result_native_grows_the_canvas_to_fit() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 64, "height": 64, "background": "white"})).unwrap();
+        let r = place_result_native(&mut s, &solid_png(128, 96), None).unwrap();
+        let d = s.active().unwrap();
+        assert_eq!((d.doc.size.width, d.doc.size.height), (128, 96));
+        assert_eq!(r["canvas"], json!([128, 96]));
+        let layer = d.doc.layer(d.active_layer.unwrap()).unwrap();
+        assert_eq!(layer.name, "ComfyUI Result");
+        let LayerContent::Raster(px) = &layer.content else { panic!("not a raster layer") };
+        assert_eq!(px.content_bounds(), Rect::new(0, 0, 128, 96));
+    }
+
+    #[test]
+    fn place_result_native_keeps_a_larger_canvas() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 64, "height": 64, "background": "white"})).unwrap();
+        place_result_native(&mut s, &solid_png(32, 32), None).unwrap();
+        let d = s.active().unwrap();
+        assert_eq!((d.doc.size.width, d.doc.size.height), (64, 64));
+        let layer = d.doc.layer(d.active_layer.unwrap()).unwrap();
+        let LayerContent::Raster(px) = &layer.content else { panic!("not a raster layer") };
+        assert_eq!(px.content_bounds(), Rect::new(16, 16, 48, 48)); // centred, 1:1
+    }
+
+    #[test]
+    fn shelf_persists_restores_and_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Session::new();
+        s.comfy.generations_dir = Some(dir.path().to_path_buf());
+        push_result(&mut s, StoredResult { bytes: b"one".to_vec(), seed: 7, prompt: "p1".into(), workflow: "w1".into(), selection: None, created_ms: 100, file: None });
+        push_result(&mut s, StoredResult { bytes: b"two".to_vec(), seed: 8, prompt: "p2".into(), workflow: "w2".into(), selection: None, created_ms: 200, file: None });
+        assert_eq!(s.comfy.results.len(), 2);
+        assert_eq!(pngs_in(dir.path()).len(), 2);
+        assert!(dir.path().join("index.json").exists());
+        assert!(s.comfy.results.iter().all(|r| r.file.is_some()));
+        // Removing the oldest drops its file and rewrites the index.
+        let r = remove_results(&mut s, &json!({"result": 0})).unwrap();
+        assert_eq!(r["removed"], json!(1));
+        assert_eq!(pngs_in(dir.path()).len(), 1);
+        let index: Value = serde_json::from_slice(&std::fs::read(dir.path().join("index.json")).unwrap()).unwrap();
+        assert_eq!(index.as_array().map(Vec::len), Some(1));
+        // A fresh session restores the survivor with its metadata (but no selection snapshot).
+        let mut s2 = Session::new();
+        s2.comfy.generations_dir = Some(dir.path().to_path_buf());
+        s2.comfy.restore_results();
+        assert_eq!(s2.comfy.results.len(), 1);
+        assert_eq!(s2.comfy.results[0].bytes, b"two".to_vec());
+        assert_eq!(s2.comfy.results[0].prompt, "p2");
+        assert_eq!(s2.comfy.results[0].created_ms, 200);
+        assert!(s2.comfy.results[0].selection.is_none());
+        // Clearing the shelf empties the folder too.
+        remove_results(&mut s2, &json!({"all": true})).unwrap();
+        assert!(s2.comfy.results.is_empty());
+        assert!(pngs_in(dir.path()).is_empty());
+        let index: Value = serde_json::from_slice(&std::fs::read(dir.path().join("index.json")).unwrap()).unwrap();
+        assert_eq!(index.as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn generation_index_rejects_escape_names() {
+        assert!(safe_generation_name("100-7.png"));
+        assert!(safe_generation_name("100-7-1.png"));
+        assert!(!safe_generation_name("../secret.png"));
+        assert!(!safe_generation_name("notes.txt"));
+        assert!(!safe_generation_name("7.png"));
+        assert!(!safe_generation_name(""));
     }
 }
