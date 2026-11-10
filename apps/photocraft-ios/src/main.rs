@@ -243,6 +243,8 @@ impl eframe::App for IosShell {
             unsafe {
                 pc_log_geometry();
             }
+            let vp = ctx.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect, i.viewport().monitor_size));
+            breadcrumb(&format!("viewport inner={vp:?}"));
         }
         self.frames += 1;
         // `PHOTOCRAFT_DEBUG_IOS=1`: a throttled sample of everything the touch layout and the

@@ -59,19 +59,36 @@ static void PCSyncViewToWindow(UIWindow *window) {
         [view layoutIfNeeded];
         NSLog(@"PCSD synced view to window bounds %@ (was stale)", NSStringFromCGRect(window.bounds));
     }
-    // wgpu adds the CAMetalLayer it renders into as a sublayer of the view, sized to the view
-    // at surface creation — and sublayers do not track the view. A layer created during
-    // UIKit's transitional geometry (the scene-attach race) then presents the render
+    // wgpu adds the CAMetalLayer it renders into as a sublayer — or a subview's layer — sized
+    // to the view at surface creation, and neither tracks the view afterwards. A layer created
+    // during UIKit's transitional geometry (the scene-attach race) presents the render
     // anisotropically scaled into the settled view: a 6.4% vertical stretch was measured
-    // (layer 1210x887pt in an 834pt-tall view), which sent taps progressively below their
-    // targets. Pin every metal sublayer to the view's real bounds.
-    Class metal = NSClassFromString(@"CAMetalLayer");
-    for (CALayer *sub in view.layer.sublayers) {
-        if (metal == nil || ![sub isKindOfClass:metal] || CGRectEqualToRect(sub.frame, view.bounds)) {
-            continue;
+    // (a metal layer 1210x887pt in an 834pt-tall view), sending taps progressively below their
+    // targets. Pin every metal layer we can reach to the view's real bounds, and re-time its
+    // drawable so wgpu's next present maps 1:1.
+    Class metal = [CAMetalLayer class];
+    if (metal == nil) {
+        return;
+    }
+    void (^pin)(CALayer *) = ^(CALayer *layer) {
+        if (CGRectEqualToRect(layer.frame, view.bounds) && CGRectEqualToRect(layer.bounds, view.bounds)) {
+            return;
         }
-        sub.frame = view.bounds;
-        NSLog(@"PCSD pinned metal sublayer to view bounds %@ (was %@)", NSStringFromCGRect(view.bounds), NSStringFromCGRect(sub.frame));
+        NSLog(@"PCSD pinning metal layer %@ -> %@", NSStringFromCGRect(layer.frame), NSStringFromCGRect(view.bounds));
+        layer.frame = view.bounds;
+        layer.bounds = view.bounds;
+        [(CAMetalLayer *)layer setDrawableSize:CGSizeMake(view.bounds.size.width * layer.contentsScale,
+                                                          view.bounds.size.height * layer.contentsScale)];
+    };
+    for (CALayer *sub in view.layer.sublayers) {
+        if ([sub isKindOfClass:metal]) {
+            pin(sub);
+        }
+    }
+    for (UIView *sub in view.subviews) {
+        if ([sub.layer isKindOfClass:metal]) {
+            pin(sub.layer);
+        }
     }
 }
 
@@ -97,6 +114,32 @@ static void PCSyncViewToWindow(UIWindow *window) {
 @interface PCSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @end
 
+static void PCDumpLayers(CALayer *layer, int depth) {
+    if (layer == nil || depth > 5) {
+        return;
+    }
+    BOOL metal = [layer isKindOfClass:[CAMetalLayer class]];
+    NSLog(@"PCGEOM L%d %@ frame=%@ bounds=%@ scale=%.2f", depth, metal ? @"METAL" : @"layer",
+          NSStringFromCGRect(layer.frame), NSStringFromCGRect(layer.bounds), layer.contentsScale);
+    for (CALayer *sub in layer.sublayers) {
+        PCDumpLayers(sub, depth + 1);
+    }
+}
+
+static void PCDumpViews(UIView *view, int depth) {
+    if (view == nil || depth > 8) {
+        return;
+    }
+    BOOL metal = [view.layer isKindOfClass:[CAMetalLayer class]];
+    NSLog(@"PCGEOM V%d %@ frame=%@%@", depth, metal ? @"METAL" : NSStringFromClass(view.class),
+          NSStringFromCGRect(view.frame),
+          metal ? [NSString stringWithFormat:@" layer.frame=%@", NSStringFromCGRect(view.layer.frame)] : @"");
+    PCDumpLayers(view.layer, 0);
+    for (UIView *sub in view.subviews) {
+        PCDumpViews(sub, depth + 1);
+    }
+}
+
 __attribute__((visibility("default"))) void pc_log_geometry(void) {
     for (UIWindow *window in UIApplication.sharedApplication.windows) {
         if (![window isKindOfClass:[UIWindow class]]) {
@@ -105,7 +148,7 @@ __attribute__((visibility("default"))) void pc_log_geometry(void) {
         UIView *view = window.rootViewController.view;
         CALayer *layer = view.layer;
         NSString *drawable = @"n/a";
-        if ([layer isKindOfClass:NSClassFromString(@"CAMetalLayer")]) {
+        if ([layer isKindOfClass:[CAMetalLayer class]]) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
             drawable = NSStringFromCGSize([(CAMetalLayer *)layer drawableSize]);
@@ -116,28 +159,7 @@ __attribute__((visibility("default"))) void pc_log_geometry(void) {
               NSStringFromCGRect(layer.bounds), layer.contentsScale, drawable,
               NSStringFromCGRect(window.screen.bounds),
               NSStringFromCGRect(((UIWindowScene *)window.windowScene).coordinateSpace.bounds));
-        // The full view/layer tree: where the metal layer actually lives and what size it is.
-        void (^dump)(UIView *, int) = ^(UIView *v, int depth) {
-            NSString *pad = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
-            NSString *extra = @"";
-            if ([v.layer isKindOfClass:NSClassFromString(@"CAMetalLayer")]) {
-                extra = [NSString stringWithFormat:@" METAL frame=%@ bounds=%@ drawable=%@ scale=%.2f",
-                         NSStringFromCGRect(v.layer.frame), NSStringFromCGRect(v.layer.bounds),
-                         NSStringFromCGSize([(CAMetalLayer *)v.layer drawableSize]), v.layer.contentsScale];
-            }
-            NSLog(@"PCGEOM %@%@ (%@) frame=%@ layer.frame=%@%@", pad, NSStringFromClass(v.class),
-                  NSStringFromCGRect(v.frame), NSStringFromCGRect(v.layer.frame), extra);
-            for (UIView *sub in v.subviews) {
-                dump(sub, depth + 1);
-            }
-            for (CALayer *sl in v.layer.sublayers) {
-                NSString *tag = [sl isKindOfClass:NSClassFromString(@"CAMetalLayer")]
-                    ? [NSString stringWithFormat:@" METAL-BOUND? frame=%@ drawable=%@ scale=%.2f", NSStringFromCGRect(sl.frame), NSStringFromCGSize([(CAMetalLayer *)sl drawableSize]), sl.contentsScale]
-                    : @"";
-                NSLog(@"PCGEOM %@  [layer] %@ frame=%@%@", pad, NSStringFromClass(sl.class), NSStringFromCGRect(sl.frame), tag);
-            }
-        };
-        dump(view, 0);
+        PCDumpViews(view, 0);
         break;
     }
 }
