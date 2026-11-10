@@ -12,5 +12,10 @@ target/
 *.log
 __pycache__/
 .DS_Store
+# Xcode build products for the iOS app (the GUI uses DerivedData, the CLI may write here).
+apps/photocraft-ios/ios/build/
+# Xcode per-user state (schemes, UI layout) stays on the machine that made it.
+xcuserdata/
+*.xcuserstate
 # Standalone build output dir (the iOS and Android app build scripts write here).
 /out/

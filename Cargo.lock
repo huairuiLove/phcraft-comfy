@@ -5482,6 +5482,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "photocraft-ios"
+version = "0.20.1"
+dependencies = [
+ "cc",
+ "eframe",
+ "egui",
+ "log",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "objc2-ui-kit 0.3.2",
+ "photocraft-codecs",
+ "photocraft-doc",
+ "photocraft-engine",
+ "photocraft-io",
+ "photocraft-raster",
+ "photocraft-text",
+ "photocraft-ui-egui",
+ "serde_json",
+]
+
+[[package]]
 name = "photocraft-ipp"
 version = "0.20.1"
 

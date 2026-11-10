@@ -1,0 +1,384 @@
+//! The iPad shell: the same ui-egui app on Metal. winit's iOS backend delivers touches as egui
+//! input (Apple Pencil force included), the canvas and tools work unchanged; platform services
+//! the OS doesn't give an iPad app (desktop file dialogs, the clipboard bridge, crash recovery)
+//! stay unset and the shell degrades gracefully, as in the browser.
+
+use std::path::{Path, PathBuf};
+
+use photocraft_codecs::{ChannelLayout, EncodeOptions, Image};
+use photocraft_doc::Document;
+use photocraft_ui_egui::theme::ThemeKind;
+
+/// The last tap's received position and for how many more frames to paint its crosshair.
+thread_local! {
+    static LAST_TAP: std::cell::RefCell<Option<(egui::Pos2, u32)>> = const { std::cell::RefCell::new(None) };
+}
+use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services};
+#[cfg(target_os = "ios")]
+use objc2_ui_kit::UICoordinateSpace;
+
+// Unconditional: the services() below references it on every host (clippy, tests); the
+// extern "C" pc_* symbols only link on iOS, where the ObjC file is compiled in.
+mod picker;
+
+fn main() -> eframe::Result {
+    // Route records to stderr (`simctl launch --console-pty`): eframe quits with exit(0) on a
+    // startup error, and without a logger that error is dropped silently.
+    let _ = log::set_logger(&StderrLogger).map(|()| log::set_max_level(log::LevelFilter::Info));
+    breadcrumb("launched");
+    discard_saved_scene_state();
+    install_locale();
+    install_panic_log();
+    picker::install();
+    let result = eframe::run_native("PhotoCraft", native_options(), Box::new(|cc| {
+        breadcrumb("app created");
+        Ok(Box::new(IosShell::new(cc)))
+    }));
+    breadcrumb(&format!("run_native returned: {result:?}"));
+    result
+}
+
+/// Startup trail, for a device where stderr is invisible: each step appends to
+/// `Documents/launch.log` (Finder file sharing). A white-screen crash names the step that never
+/// happened — or, with no entries at all, that the process never ran our binary at all
+/// (signing/build), since the trail's first line is written before anything else.
+fn breadcrumb(step: &str) {
+    let line = format!("[{:?}] {step}\n", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
+    log::info!("{step}");
+    if let Some(dir) = documents_dir() {
+        use std::io::Write as _;
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("launch.log")) {
+            let _ = write!(file, "{line}");
+        }
+    }
+}
+
+/// winit recreates its window from scratch every launch (classic lifecycle), but once the
+/// Info.plist adopts scenes, UIKit persists the scene session in `Library/Saved Application
+/// State` and restores it on the next launch — and the restored scene never attaches winit's
+/// new window: every relaunch rendered blank (egui's viewport stuck at its 10000x10000
+/// default) while a fresh install worked. PhotoCraft has no scene state worth restoring, so
+/// the saved state is dropped before the UI starts, making every launch the fresh-install
+/// path.
+fn discard_saved_scene_state() {
+    #[cfg(target_os = "ios")]
+    if let Some(home) = std::env::var_os("HOME") {
+        let _ = std::fs::remove_dir_all(std::path::Path::new(&home).join("Library/Saved Application State"));
+    }
+}
+
+/// A panic on a device is invisible (stderr goes nowhere), so each one lands in
+/// `Documents/crash.log` — readable over Finder file sharing — with a backtrace, before the
+/// default hook reports it.
+fn install_panic_log() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let text = format!("PhotoCraft panicked\n{info}\n\n{:?}\n", std::backtrace::Backtrace::force_capture());
+        log::error!("{text}");
+        if let Some(dir) = documents_dir() {
+            use std::io::Write as _;
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
+                let _ = writeln!(file, "{text}");
+            }
+        }
+        default(info);
+    }));
+}
+
+/// The app container's Documents folder (Finder file sharing exposes it).
+fn documents_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(std::env::var_os("HOME")?).join("Documents");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// The interface language and CJK script default come from the system locale: the text engine
+/// normally reads `PHOTOCRAFT_LOCALE` (`crates/text/src/cjk.rs`), and no launcher sets
+/// environment variables for an iPad app. Safe Foundation calls only (objc2's methods are safe
+/// wrappers).
+#[cfg(target_os = "ios")]
+fn install_locale() {
+    let identifier = objc2_foundation::NSLocale::currentLocale().languageIdentifier().to_string();
+    photocraft_text::cjk::set_shell_locale(identifier);
+}
+
+#[cfg(not(target_os = "ios"))]
+fn install_locale() {}
+
+/// The smallest logger that gets a startup error onto stderr.
+struct StderrLogger;
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        eprintln!("[{}] {}", record.level(), record.args());
+    }
+
+    fn flush(&self) {}
+}
+
+/// iPad: the window is the screen, so eframe's window geometry options don't apply. PhotoCraft
+/// owns its fallback fonts (`cjk_fonts`, craft-fonts), so eframe's system-font provider stays
+/// off, as on the desktop; the saved layout (panel positions) lives beside the preferences.
+fn native_options() -> eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_title("PhotoCraft"),
+        system_font_fallback: false,
+        persistence_path: app_support_dir().map(|dir| dir.join("ui.ron")),
+        ..Default::default()
+    };
+    // egui's default limits exceed what the iOS simulator GPU allows (max_inter_stage_shader_
+    // variables 16 > 15) and its 8192 px texture cap would push big documents to the CPU: request
+    // the adapter's own limits, clamped, as the browser build does.
+    photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
+    options
+}
+
+/// Wraps [`PhotocraftApp`] to hand it each frame, as the web runner does
+/// (`apps/photocraft-web/src/web.rs`), with iPad input quirks handled first.
+struct IosShell {
+    app: PhotocraftApp,
+    frames: u32,
+}
+
+impl IosShell {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // A painting app keeps the display on while it is in front: the OS auto-locks an idle
+        // iPad after two minutes, which reads on a review device as the screen going black with
+        // the app still running. Safe UIKit call, main thread by construction here.
+        #[cfg(target_os = "ios")]
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            objc2_ui_kit::UIApplication::sharedApplication(mtm).setIdleTimerDisabled(true);
+        }
+        PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::Pro);
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services());
+        // Testing aid (a launcher sets no CLI args for an iPad app): open a document at start,
+        // to reproduce the canvas states a reviewer sees.
+        if std::env::var_os("PHOTOCRAFT_OPEN_NEW").is_some()
+            && let Err(e) = app.run("file.new", serde_json::json!({"width": 1024, "height": 768, "background": "white"}))
+        {
+            log::warn!("file.new: {e}");
+        }
+        // Testing aid: the portrait panel drawer starts open on Layers, for visual checks.
+        if std::env::var_os("PHOTOCRAFT_OPEN_DRAWER").is_some() {
+            cc.egui_ctx.data_mut(|d| {
+                d.insert_temp(egui::Id::unique("touch-drawer"), Some(photocraft_ui_egui::dock::Group::Layers))
+            });
+        }
+        // Testing aid: present the system document picker at start (the native sheet is the
+        // one thing a screenshot can prove without a finger).
+        if std::env::var_os("PHOTOCRAFT_OPEN_PICKER").is_some()
+            && let Err(e) = app.run("file.open", serde_json::json!({}))
+        {
+            log::warn!("file.open: {e}");
+        }
+        // Long commands and file opens run as background jobs with progress, as on the desktop.
+        app.background_jobs = true;
+        if let Some(rs) = cc.wgpu_render_state.clone() {
+            // The GPU canvas: Metal always, and a device loss is watched, not fatal (see gpu.rs).
+            app.set_wgpu(rs);
+            app.start_compositor(&cc.egui_ctx);
+        }
+        Self { app, frames: 0 }
+    }
+}
+
+impl eframe::App for IosShell {
+    fn on_exit(&mut self) {
+        eframe::App::on_exit(&mut self.app);
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        #[cfg(target_os = "ios")]
+        repair_missing_screen_rect(raw_input);
+        // A tap can reach the app as both a Touch and an emulated pointer press; keep one, or
+        // the twin closes the menu the first one opened (#2095).
+        photocraft_ui_egui::touch_twins::drop_twins(ctx, raw_input);
+        // One pinch, two channels: winit's iOS system recognizer delivers it as `Event::Zoom`,
+        // and the same fingers arrive as Touch events that egui's `zoom_delta` already reports.
+        // Keeping both double-applies the pinch, and the recognizer's trailing events keep
+        // zooming after the fingers lift — the endless zoom wobble. The touch channel is the
+        // accurate one, so the recognizer's zooms are dropped (a trackpad pinch on an iPad is
+        // the one input that loses its zoom; its scroll still pans).
+        if self.app.session.prefs().interface.touch_ui {
+            raw_input.events.retain(|event| !matches!(event, egui::Event::Zoom(_)));
+        }
+        // `PHOTOCRAFT_DEBUG_IOS`: every touch press lands in the log with its egui position and
+        // the pointer position the same frame synthesized — comparing the two with where the
+        // finger actually was names any input offset (the "tap lands a row off" diagnosis).
+        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some() {
+            for event in &raw_input.events {
+                match event {
+                    egui::Event::Touch { phase: egui::TouchPhase::Start, pos, .. } => {
+                        breadcrumb(&format!("touch press at {pos:?} (screen {:?})", ctx.input(|i| i.content_rect())));
+                    }
+                    egui::Event::PointerButton { pressed: true, pos, .. } => {
+                        breadcrumb(&format!("pointer press at {pos:?} (hover {:?}, screen {:?})", ctx.input(|i| i.pointer.latest_pos()), ctx.input(|i| i.content_rect())));
+                        LAST_TAP.with(|t| *t.borrow_mut() = Some((*pos, 180)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        eframe::App::raw_input_hook(&mut self.app, ctx, raw_input);
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.frames == 0 {
+            breadcrumb("first frame");
+        }
+        self.frames += 1;
+        // `PHOTOCRAFT_DEBUG_IOS=1`: a throttled sample of everything the touch layout and the
+        // canvas zoom read, for the wobble/crash diagnoses (a device has no visible stderr; use
+        // the log next to the breadcrumbs).
+        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some() && self.frames.is_multiple_of(30) {
+            let screen = ctx.input(|i| i.content_rect());
+            let insets = ctx.input(|i| i.safe_area_insets().0);
+            let view = self.app.ui.views.first().map(|v| (v.zoom, v.center));
+            let forced = std::env::var_os("PHOTOCRAFT_FORCE_PORTRAIT").is_some();
+            let touch = self.app.session.prefs().interface.touch_ui;
+            breadcrumb(&format!(
+                "frame {} ppp {:.3} zoom {:.3} screen {}x{} insets t{} b{} view {view:?} forced={forced} touch_ui={touch}",
+                self.frames,
+                ctx.pixels_per_point(),
+                ctx.zoom_factor(),
+                screen.width(),
+                screen.height(),
+                insets.top,
+                insets.bottom,
+            ));
+        }
+        self.app.logic_frame(ctx, frame);
+        self.app.finish_type_reset_logic(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.app.ui_frame(ui, frame);
+        self.app.finish_type_reset_pass(ui.ctx());
+        // `PHOTOCRAFT_DEBUG_IOS`: a crosshair at the position the last tap was RECEIVED at,
+        // for ~3 s — one screenshot then shows the finger's intent and the app's belief.
+        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some()
+            && let Some((pos, left)) = LAST_TAP.with(|t| *t.borrow_mut()).into_iter().next()
+        {
+            if left == 0 {
+                LAST_TAP.with(|t| *t.borrow_mut() = None);
+            } else {
+                LAST_TAP.with(|t| {
+                    let mut cell = t.borrow_mut();
+                    if let Some((_, left)) = cell.as_mut() {
+                        *left -= 1;
+                    }
+                });
+                let p = ui.painter();
+                p.line_segment([pos - egui::vec2(30.0, 0.0), pos + egui::vec2(30.0, 0.0)], egui::Stroke::new(3.0, egui::Color32::RED));
+                p.line_segment([pos - egui::vec2(0.0, 30.0), pos + egui::vec2(0.0, 30.0)], egui::Stroke::new(3.0, egui::Color32::RED));
+                p.circle_filled(pos, 5.0, egui::Color32::YELLOW);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn repair_missing_screen_rect(raw_input: &mut egui::RawInput) {
+    let invalid = raw_input.screen_rect.is_none_or(|rect| rect.width() >= 9999.0 || rect.height() >= 9999.0);
+    if !invalid {
+        return;
+    }
+
+    let Some(mtm) = objc2::MainThreadMarker::new() else {
+        return;
+    };
+    let scenes = objc2_ui_kit::UIApplication::sharedApplication(mtm)
+        .connectedScenes()
+        .allObjects();
+    let scene_size = (0..scenes.count()).find_map(|index| {
+        scenes
+            .objectAtIndex(index)
+            .downcast::<objc2_ui_kit::UIWindowScene>()
+            .ok()
+            .map(|scene| {
+                #[allow(deprecated)]
+                let bounds = scene.coordinateSpace().bounds();
+                egui::vec2(bounds.size.width as f32, bounds.size.height as f32)
+            })
+    });
+    #[allow(deprecated)]
+    let fallback_bounds = objc2_ui_kit::UIScreen::mainScreen(mtm).bounds();
+    let size = scene_size.unwrap_or_else(|| {
+        egui::vec2(fallback_bounds.size.width as f32, fallback_bounds.size.height as f32)
+    });
+    if size.is_finite() && size.x > 0.0 && size.y > 0.0 {
+        raw_input.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size));
+    }
+}
+
+fn services() -> Services {
+    Services {
+        import: Some(Box::new(|name: &str, bytes: &[u8], opts: &photocraft_io::ImportOptions| {
+            photocraft_io::import_with_options(name, bytes, opts).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string())
+        })),
+        export: Some(Box::new(|doc: &Document, path: &str, settings: &photocraft_ui_egui::ExportSettings| {
+            photocraft_io::export(doc, path, &settings.io_options()).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())
+        })),
+        // The system document picker (ios/PCDocumentPicker.m + src/picker.rs). Open reads the
+        // picked files in the delegate (security scope) and answers with contents; Save
+        // answers the name at once and `write` stages the bytes then presents the export
+        // sheet that copies them wherever the user picks — the web download's shape, so
+        // `write_unconfirmed` keeps an honest unsaved mark (a cancelled sheet saved nothing).
+        file_dialog: Some(Box::new(|request, _parent, reply| match request {
+            FileDialogRequest::Open { multiple, .. } => picker::open(multiple, reply),
+            // Folder pickers have no counterpart (as on the web): back out.
+            FileDialogRequest::Folder { .. } => reply.send(None),
+            FileDialogRequest::Save { suggested } => {
+                let name = Path::new(&suggested)
+                    .file_name()
+                    .map_or_else(|| suggested.clone(), |n| n.to_string_lossy().into_owned());
+                reply.send(Some(FileDialogAnswer::SaveTo(name)));
+            }
+        })),
+        write: Some(Box::new(|path: &str, bytes: &[u8]| {
+            let name = Path::new(path)
+                .file_name()
+                .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned());
+            let staged = std::env::temp_dir().join(format!("photocomfy-export-{name}"));
+            std::fs::write(&staged, bytes).map_err(|e| e.to_string())?;
+            // The write runs inline with the frame on the main thread, and the picker
+            // presents there; the delegate copies the staged file to the destination.
+            picker::export(&staged);
+            Ok(())
+        })),
+        write_unconfirmed: true,
+        encode_png: Some(Box::new(|w, h, rgba| {
+            let img = Image::from_u8(w, h, ChannelLayout::Rgba, rgba.to_vec()).map_err(|e| e.to_string())?;
+            photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &EncodeOptions::default()).map_err(|e| e.to_string())
+        })),
+        load_prefs: Some(Box::new(read_prefs)),
+        save_prefs: Some(Box::new(write_prefs)),
+        ..Default::default()
+    }
+}
+
+const PREFS_FILE: &str = "preferences.json";
+
+/// The app container's Application Support folder. The iOS sandbox's `HOME` is the container
+/// (the simulator's likewise); created on first use, `None` where storage is unavailable.
+fn app_support_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/PhotoCraft");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn read_prefs() -> Option<String> {
+    std::fs::read_to_string(app_support_dir()?.join(PREFS_FILE)).ok()
+}
+
+fn write_prefs(text: &str) -> Result<(), String> {
+    let dir = app_support_dir().ok_or("no Application Support directory")?;
+    // Write beside the file and rename, so a crash mid-write can't corrupt the preferences.
+    let tmp = dir.join(format!("{PREFS_FILE}.tmp"));
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join(PREFS_FILE)).map_err(|e| e.to_string())
+}

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>PhotoCraft</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>PhotoCraft</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- The binary is built by Cargo (ios/build.sh) and placed into the bundle by the
+	     target's script phase; Xcode signs the finished bundle. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>MinimumOSVersion</key>
+	<string>16.0</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>2</integer>
+	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<!-- Launch screen: dark, matching the app's chrome, so the cold-start window (a freshly
+	     booted simulator's first launch takes ~13 s to first frame; warm launches ~1 s) reads
+	     as "loading" rather than a white screen. -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string></string>
+		<key>UIBackgroundColor</key>
+		<string>#1c1c1e</string>
+	</dict>
+	<!-- UIScene lifecycle adoption, required by iPadOS 27 (which traps at scene creation
+	     otherwise; 26 only warns). The delegate class is the empty PCSceneDelegate compiled
+	     into the binary by build.rs — winit still drives the window itself through the classic
+	     path, attaching its plain UIWindow to the foreground scene this manifest creates. A
+	     manifest WITHOUT a delegate class name leaves no foreground scene for that window and
+	     every OS shows a black screen (tried and reverted); the delegate name is the load-bearing
+	     part. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default</string>
+					<key>UISceneDelegateClassName</key>
+					<string>PCSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>
