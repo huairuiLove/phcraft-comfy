@@ -459,6 +459,10 @@ pub struct Services {
     pub check_updates: Option<photocraft_engine::updates_cmds::CheckFn>,
     /// Blocking HTTP calls to the ComfyUI server for File › Generate Image (desktop; `ai.comfyui.*`).
     pub comfy_transport: Option<photocraft_engine::comfy_cmds::ComfyFn>,
+    /// True when `comfy_transport` speaks the OpenAI-compatible Image API instead of a ComfyUI
+    /// server (the iPad app): the generation panel shows the Image API settings and the "Image
+    /// API Edit" workflow, and Preferences hides the desktop-only fields (and vice versa).
+    pub comfy_image_api: bool,
     /// Where `ai.comfyui.workflows.*` stores imported workflows (the config dir's
     /// `comfy_workflows` folder; desktop only).
     pub comfy_workflows_dir: Option<std::path::PathBuf>,

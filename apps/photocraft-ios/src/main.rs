@@ -9,9 +9,9 @@ use photocraft_codecs::{ChannelLayout, EncodeOptions, Image};
 use photocraft_doc::Document;
 use photocraft_ui_egui::theme::ThemeKind;
 
-/// The last tap's received position and for how many more frames to paint its crosshair.
+/// The last tap's received position, painted as a crosshair under `PHOTOCRAFT_DEBUG_IOS`.
 thread_local! {
-    static LAST_TAP: std::cell::RefCell<Option<(egui::Pos2, u32)>> = const { std::cell::RefCell::new(None) };
+    static LAST_TAP: std::cell::RefCell<Option<egui::Pos2>> = const { std::cell::RefCell::new(None) };
 }
 use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services};
 #[cfg(target_os = "ios")]
@@ -20,6 +20,8 @@ use objc2_ui_kit::UICoordinateSpace;
 // Unconditional: the services() below references it on every host (clippy, tests); the
 // extern "C" pc_* symbols only link on iOS, where the ObjC file is compiled in.
 mod picker;
+// Unconditional too: the transport links everywhere and its tests run on the host.
+mod api_gen;
 
 fn main() -> eframe::Result {
     // Route records to stderr (`simctl launch --console-pty`): eframe quits with exit(0) on a
@@ -213,11 +215,11 @@ impl eframe::App for IosShell {
             for event in &raw_input.events {
                 match event {
                     egui::Event::Touch { phase: egui::TouchPhase::Start, pos, .. } => {
-                        breadcrumb(&format!("touch press at {pos:?} (screen {:?})", ctx.input(|i| i.content_rect())));
+                        breadcrumb(&format!("touch press at {pos:?} (zoom {:.3} ppp {:.3}, screen {:?})", ctx.zoom_factor(), ctx.pixels_per_point(), ctx.input(|i| i.content_rect())));
                     }
                     egui::Event::PointerButton { pressed: true, pos, .. } => {
-                        breadcrumb(&format!("pointer press at {pos:?} (hover {:?}, screen {:?})", ctx.input(|i| i.pointer.latest_pos()), ctx.input(|i| i.content_rect())));
-                        LAST_TAP.with(|t| *t.borrow_mut() = Some((*pos, 180)));
+                        breadcrumb(&format!("pointer press at {pos:?} (zoom {:.3} ppp {:.3}, screen {:?})", ctx.zoom_factor(), ctx.pixels_per_point(), ctx.input(|i| i.content_rect())));
+                        LAST_TAP.with(|t| *t.borrow_mut() = Some(*pos));
                     }
                     _ => {}
                 }
@@ -229,6 +231,18 @@ impl eframe::App for IosShell {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.frames == 0 {
             breadcrumb("first frame");
+        }
+        // `PHOTOCRAFT_DEBUG_IOS`: the view/layer/drawable geometry once, to name any present-path
+        // mismatch (the anisotropic-stretch diagnosis).
+        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some() && (self.frames == 2 || self.frames.is_multiple_of(300)) {
+            #[cfg(target_os = "ios")]
+            unsafe extern "C" {
+                safe fn pc_log_geometry();
+            }
+            #[cfg(target_os = "ios")]
+            unsafe {
+                pc_log_geometry();
+            }
         }
         self.frames += 1;
         // `PHOTOCRAFT_DEBUG_IOS=1`: a throttled sample of everything the touch layout and the
@@ -260,23 +274,31 @@ impl eframe::App for IosShell {
         self.app.finish_type_reset_pass(ui.ctx());
         // `PHOTOCRAFT_DEBUG_IOS`: a crosshair at the position the last tap was RECEIVED at,
         // for ~3 s — one screenshot then shows the finger's intent and the app's belief.
-        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some()
-            && let Some((pos, left)) = LAST_TAP.with(|t| *t.borrow_mut()).into_iter().next()
-        {
-            if left == 0 {
-                LAST_TAP.with(|t| *t.borrow_mut() = None);
-            } else {
-                LAST_TAP.with(|t| {
-                    let mut cell = t.borrow_mut();
-                    if let Some((_, left)) = cell.as_mut() {
-                        *left -= 1;
-                    }
-                });
-                let p = ui.painter();
-                p.line_segment([pos - egui::vec2(30.0, 0.0), pos + egui::vec2(30.0, 0.0)], egui::Stroke::new(3.0, egui::Color32::RED));
-                p.line_segment([pos - egui::vec2(0.0, 30.0), pos + egui::vec2(0.0, 30.0)], egui::Stroke::new(3.0, egui::Color32::RED));
-                p.circle_filled(pos, 5.0, egui::Color32::YELLOW);
+        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some() {
+            // A 100 pt grid of labelled dots: tap one, and the crosshair's distance to the dot
+            // you aimed at is the input offset, read straight off the screenshot.
+            let screen = ui.input(|i| i.content_rect());
+            let p = ui.ctx().debug_painter();
+            let mut x = 100.0;
+            while x < screen.right() {
+                let mut y = 100.0;
+                while y < screen.bottom() {
+                    let at = egui::pos2(x, y);
+                    p.circle_filled(at, 3.0, egui::Color32::from_rgb(0, 200, 255));
+                    p.text(at + egui::vec2(4.0, 4.0), egui::Align2::LEFT_TOP, format!("{x:.0},{y:.0}"), egui::FontId::monospace(11.0), egui::Color32::from_rgb(0, 170, 255));
+                    y += 100.0;
+                }
+                x += 100.0;
             }
+        }
+        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some()
+            && let Some(pos) = LAST_TAP.with(|t| *t.borrow())
+        {
+            let p = ui.ctx().debug_painter();
+            p.line_segment([pos - egui::vec2(40.0, 0.0), pos + egui::vec2(40.0, 0.0)], egui::Stroke::new(3.0, egui::Color32::RED));
+            p.line_segment([pos - egui::vec2(0.0, 40.0), pos + egui::vec2(0.0, 40.0)], egui::Stroke::new(3.0, egui::Color32::RED));
+            p.circle_filled(pos, 6.0, egui::Color32::YELLOW);
+            p.text(pos + egui::vec2(8.0, 8.0), egui::Align2::LEFT_TOP, format!("{pos:?}"), egui::FontId::monospace(14.0), egui::Color32::RED);
         }
     }
 }
@@ -357,6 +379,13 @@ fn services() -> Services {
         })),
         load_prefs: Some(Box::new(read_prefs)),
         save_prefs: Some(Box::new(write_prefs)),
+        // Generation goes straight to the user's OpenAI-compatible Image API (src/api_gen.rs),
+        // not through a ComfyUI server: the endpoint, model and key are Preferences ▸ Integrations
+        // (editable in the generation panel), and results persist in the container like the
+        // desktop's Generations folder, so the shelf survives a relaunch.
+        comfy_transport: Some(api_gen::transport()),
+        comfy_image_api: true,
+        comfy_generations_dir: app_support_dir().map(|dir| dir.join("Generations")),
         ..Default::default()
     }
 }

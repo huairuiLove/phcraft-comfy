@@ -24,6 +24,13 @@
 	     target's script phase; Xcode signs the finished bundle. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- The Image API endpoint is user-configured and https; loopback (a relay on the Mac during
+	     simulator testing) is exempted from App Transport Security, non-local http is not. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>MinimumOSVersion</key>
 	<string>16.0</string>
 	<key>UIDeviceFamily</key>
@@ -31,6 +38,11 @@
 		<integer>2</integer>
 	</array>
 	<key>UIFileSharingEnabled</key>
+	<true/>
+	<!-- With UIFileSharingEnabled this makes the app's Documents appear under 我的 iPad / On My
+	     iPad in the Files app and the document picker; without it only Finder (a real device)
+	     sees the folder and the picker's On My iPad stays empty. -->
+	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<!-- Launch screen: dark, matching the app's chrome, so the cold-start window (a freshly
 	     booted simulator's first launch takes ~13 s to first frame; warm launches ~1 s) reads

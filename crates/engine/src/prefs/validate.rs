@@ -50,12 +50,24 @@ pub const HIDDEN_UNTIL_IMPLEMENTED: &[&str] = &[
 
 /// Is the preference at `path` (`"section.key"`) hidden from the Preferences dialog?
 pub fn is_hidden(path: &str) -> bool {
-    HIDDEN_UNTIL_IMPLEMENTED.contains(&path) || (!cfg!(target_os = "linux") && LINUX_ONLY.contains(&path))
+    HIDDEN_UNTIL_IMPLEMENTED.contains(&path)
+        || (!cfg!(target_os = "linux") && LINUX_ONLY.contains(&path))
+        || (!cfg!(any(target_os = "ios", target_os = "android")) && IMAGE_API_ONLY.contains(&path))
+        || (cfg!(any(target_os = "ios", target_os = "android")) && COMFYUI_ONLY.contains(&path))
 }
 
 /// Preferences that only do something on Linux; the dialog doesn't show them elsewhere. They
 /// still load, save and round-trip on every platform.
 pub const LINUX_ONLY: &[&str] = &["performance.linuxDisplayServer", "performance.gpuAdapter"];
+
+/// The direct Image API settings (the mobile apps' generation backend): the desktop shells
+/// inject a ComfyUI transport and never read them, so the dialog hides them there. Like every
+/// hidden preference they still load, save and round-trip.
+pub const IMAGE_API_ONLY: &[&str] = &["integrations.imageApiBase", "integrations.imageApiKey", "integrations.imageApiModel"];
+
+/// The ComfyUI server settings: the mobile apps have no ComfyUI server to talk to, so the dialog
+/// hides them there (the desktop shows them, and hides the Image API ones instead).
+pub const COMFYUI_ONLY: &[&str] = &["integrations.comfyUrl", "integrations.comfyWorkflowsDir"];
 
 /// Whether a graphics adapter called `name` is the one `performance.gpuAdapter` (`wanted`) asks
 /// for: every whitespace-separated word of `wanted` appears in the name, ignoring case ("nvidia",
