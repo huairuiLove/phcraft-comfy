@@ -5221,6 +5221,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "photocraft-android"
+version = "0.20.1"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui_kittest",
+ "jni",
+ "log",
+ "photocraft-codecs",
+ "photocraft-doc",
+ "photocraft-engine",
+ "photocraft-io",
+ "photocraft-raster",
+ "photocraft-text",
+ "photocraft-ui-egui",
+ "serde_json",
+ "sys-locale",
+ "winit",
+]
+
+[[package]]
 name = "photocraft-automation"
 version = "0.20.1"
 dependencies = [

@@ -12,5 +12,9 @@ target/
 *.log
 __pycache__/
 .DS_Store
+# The Android APK staging dir and its generated signing key
+# (apps/photocraft-android/android/build.sh writes both; the key never leaves this machine).
+apps/photocraft-android/android/build/
+apps/photocraft-android/android/*.keystore
 # Standalone build output dir (the iOS and Android app build scripts write here).
 /out/

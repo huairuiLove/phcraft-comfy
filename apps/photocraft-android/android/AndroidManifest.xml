@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Compiled by android/build.sh with aapt2 — no Gradle, no Java sources: the system
+     android.app.NativeActivity loads libphotocraft_android.so, which brings up the JVM thread
+     through android-activity and calls android_main (src/lib.rs). debuggable stays on so the
+     team build's logs are reachable with `adb run-as`; turn it off for any wider release. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.photocomfy.app">
+
+    <!-- For the ComfyUI transport when it lands (LAN generation); harmless otherwise. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The in-app file browser (apps/photocraft-android/src/browser.rs) reads and writes the
+         shared storage directly: the system SAF pickers can't answer a NativeActivity (no
+         onActivityResult), and this grant makes the tree plain std::fs. Granted once by the
+         user in settings (the browser links there); fine for a sideloaded team build — the
+         Play store would reject it, and this APK is not for the store. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+
+    <application
+        android:label="PhotoComfy"
+        android:hasCode="false"
+        android:debuggable="true"
+        android:extractNativeLibs="true"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <!-- configChanges covers rotation, fold and density changes so the activity (and the
+             winit window behind it) is resized in place instead of being torn down. -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|orientation|screenLayout|screenSize|smallestScreenSize|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <meta-data android:name="android.app.lib_name" android:value="photocraft_android"/>
+        </activity>
+    </application>
+</manifest>
