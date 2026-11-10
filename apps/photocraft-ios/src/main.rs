@@ -19,6 +19,7 @@ use objc2_ui_kit::UICoordinateSpace;
 
 // Unconditional: the services() below references it on every host (clippy, tests); the
 // extern "C" pc_* symbols only link on iOS, where the ObjC file is compiled in.
+mod long_press;
 mod picker;
 // Unconditional too: the transport links everywhere and its tests run on the host.
 mod api_gen;
@@ -144,6 +145,8 @@ fn native_options() -> eframe::NativeOptions {
 struct IosShell {
     app: PhotocraftApp,
     frames: u32,
+    /// Long-press → the synthesized right-click that opens the context menus (long_press.rs).
+    long_press: long_press::LongPress,
 }
 
 impl IosShell {
@@ -184,7 +187,7 @@ impl IosShell {
             app.set_wgpu(rs);
             app.start_compositor(&cc.egui_ctx);
         }
-        Self { app, frames: 0 }
+        Self { app, frames: 0, long_press: long_press::LongPress::default() }
     }
 }
 
@@ -196,6 +199,13 @@ impl eframe::App for IosShell {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         #[cfg(target_os = "ios")]
         repair_missing_screen_rect(raw_input);
+        // A finger held still for half a second is the touch right-click: synthesize it, and
+        // swallow the finger's own events until it lifts so the release cannot click through
+        // the menu that opened (long_press.rs).
+        self.long_press.frame(&mut raw_input.events, raw_input.time);
+        if let Some(wait) = self.long_press.fires_within(raw_input.time) {
+            ctx.request_repaint_after(wait);
+        }
         // A tap can reach the app as both a Touch and an emulated pointer press; keep one, or
         // the twin closes the menu the first one opened (#2095).
         photocraft_ui_egui::touch_twins::drop_twins(ctx, raw_input);
@@ -234,7 +244,7 @@ impl eframe::App for IosShell {
         }
         // `PHOTOCRAFT_DEBUG_IOS`: the view/layer/drawable geometry once, to name any present-path
         // mismatch (the anisotropic-stretch diagnosis).
-        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some() && (self.frames == 2 || self.frames.is_multiple_of(300)) {
+        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some() && (self.frames == 2 || self.frames.is_multiple_of(30)) {
             #[cfg(target_os = "ios")]
             unsafe extern "C" {
                 safe fn pc_log_geometry();
