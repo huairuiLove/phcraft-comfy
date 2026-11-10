@@ -353,7 +353,20 @@ fn dialog_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, d: &Dialog, fields: &
     let mut outcome: Option<bool> = None;
     match d.kind {
         DialogKind::NewDocument => {
-            if crate::new_doc_ui::body(app, ui, fields) {
+            // A short viewport (an 11-inch iPad in landscape at the Touch Interface zoom has
+            // ~596 pt) must keep the dialog's Create row on screen: the body scrolls within
+            // the room left by the title and buttons, which stay put. Without this the dialog
+            // ran to the screen's bottom edge, putting Create under the home indicator.
+            // 60 pt of breathing room on top of the title/button chrome: without it the dialog
+            // is exactly as tall as the viewport and its buttons land on the screen's edge.
+            let room = (ui.ctx().content_rect().height() - DIALOG_CHROME - 60.0).max(120.0);
+            let mut made = false;
+            egui::ScrollArea::vertical().id_salt(id.with("new-doc-body")).max_height(room).show(ui, |ui| {
+                if crate::new_doc_ui::body(app, ui, fields) {
+                    made = true;
+                }
+            });
+            if made {
                 outcome = Some(true);
             }
         }
@@ -643,6 +656,9 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 ui.set_min_width(w.min(460.0));
             }
             if d.kind == DialogKind::NewDocument {
+                // Clamped to the room there is: an 11-inch iPad in portrait at the Touch
+                // Interface scale has ~760 pt, and a minimum above that pushed the dialog
+                // (its Create button included) past the right edge of the screen.
                 ui.set_min_width(800.0);
             }
             // The About window: room for the contributor table, the same width on every tab.

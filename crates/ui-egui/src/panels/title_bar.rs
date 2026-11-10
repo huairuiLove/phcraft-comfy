@@ -11,6 +11,9 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let custom = app.custom_titlebar;
     let system = system_title_bar(app);
+    // Touch Interface: the OS status bar shares the screen's top edge (iPadOS reports the safe
+    // area through the input; elsewhere it is zero), so the bar starts below it.
+    let top_inset = if app.session.prefs().interface.touch_ui { ui.ctx().input(|i| i.safe_area_insets().0.top) } else { 0.0 };
     // The caption buttons' room at each end (`titlebar`); a side with buttons has no margin.
     let (caption_left, caption_right) = crate::titlebar::reserved(app, ui.ctx());
     let left = if cfg!(target_os = "macos") && app.integrated_titlebar {
@@ -22,8 +25,13 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     };
     let right = if caption_right > 0.0 { 0 } else { 10 };
     let bar = egui::Panel::top("title_bar")
-        .exact_size(crate::titlebar::bar_height(app, ui.ctx(), if t.pro { 32.0 } else { 38.0 }))
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin { left, right, top: 0, bottom: 0 }))
+        .exact_size(crate::titlebar::bar_height(app, ui.ctx(), if t.pro { 32.0 } else { 38.0 }) + top_inset)
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin {
+            left,
+            right,
+            top: top_inset.round() as i8,
+            bottom: 0,
+        }))
         .show(ui, |ui| {
             let full = ui.max_rect();
             // Only the free gap between the menus and the far-end controls drags the window: a

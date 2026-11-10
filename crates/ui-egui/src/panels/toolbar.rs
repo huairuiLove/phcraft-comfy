@@ -94,6 +94,11 @@ pub(super) fn tool_flyout_release(row: Rect, pointer: Option<Pos2>, released: bo
 }
 
 pub fn toolbar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+    // Portrait Touch Interface: one tool row along the screen's bottom edge (the panel
+    // drawer above it replaces the end dock), its flyouts opening over the canvas.
+    if crate::touch::portrait(app, ui.ctx()) {
+        return toolbar_bottom(app, ui);
+    }
     let t = Tokens::get(ui.ctx());
     let (w1, bx, m) = if t.pro { (40.0, 30.0, 5i8) } else { (50.0, 36.0, 7i8) };
     let sections = visible_sections(&app.session.prefs().toolbar.hidden);
@@ -629,4 +634,89 @@ fn chip_command(app: &mut PhotocraftApp, id: &str) {
     if app.run(id, json!({})).is_ok() {
         crate::type_tool::foreground_changed(app);
     }
+}
+
+/// Portrait Touch Interface's tool strip along the screen's bottom edge: every visible tool in
+/// one row, sections separated by dividers, flyouts opening above the buttons, and the screen's
+/// safe area kept clear. It stands in for the desktop toolbar's column (with its colour chips,
+/// Quick Mask and Screen Mode wheel, which the menus cover) while a portrait iPad has no room
+/// for a side column.
+fn toolbar_bottom(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let bx = 44.0;
+    let inset = ui.ctx().input(|i| i.safe_area_insets().0.bottom);
+    egui::Panel::bottom("toolbar")
+        .resizable(false)
+        .exact_size(bx + 16.0 + inset)
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin {
+            left: 7,
+            right: 7,
+            top: 8,
+            bottom: 8 + inset.round() as i8,
+        }))
+        .show(ui, |ui| {
+            let sections = visible_sections(&app.session.prefs().toolbar.hidden);
+            let ctx = ui.ctx().clone();
+            egui::ScrollArea::horizontal()
+                .id_salt("toolbar-strip")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(3.0, 2.0);
+                        for (si, section) in sections.iter().enumerate() {
+                            if si > 0 {
+                                let (r, _) = ui.allocate_exact_size(vec2(1.0, bx), Sense::hover());
+                                ui.painter().line_segment(
+                                    [pos2(r.center().x, r.top() + 8.0), pos2(r.center().x, r.bottom() - 8.0)],
+                                    Stroke::new(1.0, t.separator),
+                                );
+                                ui.add_space(8.0);
+                            }
+                            for (slot_index, slot) in section.iter() {
+                                let shown = slot_tool(ui, app.ui.tool, slot, egui::Id::unique(("strip-slot", *slot_index)));
+                                let sel = slot.contains(&app.ui.tool);
+                                let tip = tl!(shown.label()).to_string();
+                                let resp = icons::button_with_icon_size_tip(ui, icons::tool_icon(shown), bx, toolbar_icon_size(bx, t.pro), sel, &tip, true);
+                                if slot.len() > 1 {
+                                    paint_toolbar_flyout_indicator(ui, &t, &resp);
+                                }
+                                if resp.clicked() {
+                                    crate::tool_memory::select(app, shown);
+                                }
+                                // Long press or right click opens the slot's tools above the button
+                                // (the desktop toolbar's flyout opens beside its column).
+                                let held_for = resp.is_pointer_button_down_on().then(|| ui.input(|i| i.pointer.press_start_time().map(|t0| i.time - t0))).flatten();
+                                if slot.len() > 1
+                                    && let Some(seconds) = held_for
+                                    && seconds < 0.35
+                                {
+                                    ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(0.35 - seconds));
+                                }
+                                let long_press = held_for.is_some_and(|seconds| seconds >= 0.35);
+                                if slot.len() > 1 && (long_press || resp.secondary_clicked()) {
+                                    if long_press {
+                                        crate::tool_memory::select(app, shown);
+                                    }
+                                    egui::Popup::menu(&resp)
+                                        .open_memory(Some(egui::SetOpenCommand::Bool(true)))
+                                        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+                                        .show(|ui| {
+                                            ui.set_min_width(200.0);
+                                            for &item in slot.iter() {
+                                                let label = tl!(item.label()).to_string();
+                                                if ui.add(egui::Button::selectable(item == app.ui.tool, label)).clicked() {
+                                                    crate::tool_memory::select(app, item);
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
+                                }
+                            }
+                        }
+                        if icons::button(ui, "ellipsis", bx, false, tl!("Edit Toolbar…")).clicked() {
+                            let _ = crate::menus::invoke(app, &ctx, "edit.toolbar", json!({}));
+                        }
+                    });
+                });
+        });
 }

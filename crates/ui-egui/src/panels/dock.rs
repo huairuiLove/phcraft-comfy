@@ -3,20 +3,92 @@ use super::info::info_panel;
 use super::layers::{channels, layers};
 use super::navigator::navigator;
 use super::properties::{adjustments_grid, properties_body};
-use super::{PhotocraftApp, Stroke, Tokens, icons, pos2};
+use super::{PhotocraftApp, Stroke, Tokens, icons, pos2, vec2};
 
 // ----------------------------------------------------------------------------- dock
 
 /// The panels and the canvas in the space left by the menus, bars and toolbar: craft-ui's
-/// docking layout, with the icon rail at the window's end edge in the Studio themes.
+/// docking layout, with the icon rail at the window's end edge in the Studio themes. Portrait
+/// Touch Interface replaces it with the canvas alone and the group drawer over the tool strip
+/// (craft-ui docks only to a screen's side edges, and a portrait iPad has no side to give).
 pub fn dock_area(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    if crate::touch::portrait(app, ui.ctx()) {
+        // All side panels before the central one (egui's panel order), the drawer first so the
+        // tool strip keeps the screen's bottom edge.
+        touch_drawer(app, ui);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(crate::prefs_ui::pasteboard_color(app).unwrap_or(t.canvas)))
+            .show(ui, |ui| crate::canvas::document_area(app, ui));
+        return;
+    }
     if app.ui.panels.rail && !t.pro {
         rail(app, ui, &t);
     }
     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| crate::panel_docking::show(app, ui));
     crate::dock::persist(app, ui.ctx());
     crate::color_panel_ui::persist(app);
+}
+
+/// The panel drawer above the portrait tool strip: one button per panel group (the side rail's
+/// icons), the picked group's tabs and body over the canvas, closed by tapping it again. The
+/// bodies are the dock's own (`crate::panels::dock_body`), and the selected tab is remembered
+/// per group like the desktop dock's.
+fn touch_drawer(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+    use crate::dock::Group;
+    let t = Tokens::get(ui.ctx());
+    let id = egui::Id::unique("touch-drawer");
+    let open: Option<Group> = ui.ctx().data(|d| d.get_temp(id));
+    let pro = t.pro;
+    let entries: [(Group, &str, &str); 8] = [
+        (Group::Layers, "layers", tl!("Layers")),
+        (Group::Properties, "sliders-horizontal", tl!("Properties")),
+        (Group::Color, "palette", tl!("Color & Swatches")),
+        (Group::Navigator, "navigation", tl!("Navigator")),
+        (Group::History, "clock", tl!("History")),
+        (Group::Brushes, "brush", tl!("Brushes")),
+        (Group::Character, "type", tl!("Character")),
+        (Group::Comfy, "sparkles", tl!("Generate")),
+    ];
+    let bar = 44.0;
+    let body = if open.is_some() { (ui.ctx().input(|i| i.content_rect()).height() * 0.4).clamp(180.0, 320.0) } else { 0.0 };
+    egui::Panel::bottom("touch_panels")
+        .resizable(false)
+        .exact_size(bar + body)
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 4)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(3.0, 2.0);
+                for (group, icon, name) in entries {
+                    if icons::rail_button(ui, icon, 32.0, open == Some(group), name).clicked() {
+                        let next = (open != Some(group)).then_some(group);
+                        ui.ctx().data_mut(|d| d.insert_temp(id, next));
+                    }
+                }
+            });
+            let Some(group) = open else { return };
+            let tabs = group.tabs(pro);
+            let tab = *group.tab_mut(&mut app.ui.dock_tabs);
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
+                for (index, label) in tabs.iter().enumerate() {
+                    if ui
+                        .selectable_label(index == tab, egui::RichText::new(tl!(label)).text_style(egui::TextStyle::Small))
+                        .clicked()
+                    {
+                        *group.tab_mut(&mut app.ui.dock_tabs) = index;
+                    }
+                }
+            });
+            ui.add_space(2.0);
+            let tab = *group.tab_mut(&mut app.ui.dock_tabs);
+            egui::ScrollArea::vertical()
+                .id_salt(("touch-drawer-body", group.key()))
+                .auto_shrink([false, false])
+                .max_height(body - bar - 4.0)
+                .show(ui, |ui| crate::panels::dock_body(app, ui, group, tab));
+        });
 }
 
 /// The docking layout's protected canvas panel: the document area, with the icon rail on its end

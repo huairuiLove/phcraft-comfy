@@ -3072,3 +3072,71 @@ fn torn_off_document_is_not_drawn_again_in_the_main_window() {
         assert_eq!(tabs, Some(vec![1]), "{kind:?}: only the docked document stays on the main tab strip");
     }
 }
+
+/// Two fingers on the canvas navigate and never paint (Photoshop on iPad): a brush stroke the
+/// second finger lands in the middle of is cancelled whole, the fingers pan the view, and the
+/// phantom click of the last finger lifting paints nothing. One finger still paints.
+#[test]
+fn two_fingers_cancel_a_stroke_and_pan_instead_of_painting() {
+    use egui::{TouchId, TouchPhase};
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({"width": 64, "height": 64, "background": "transparent"})).unwrap();
+    app.run("tools.setBrush", json!({"brush": {"size": 8, "hardness": 1.0, "smoothing": {"amount": 0.0}}})).unwrap();
+    app.run("tools.setColors", json!({"foreground": [0.0, 0.0, 0.0, 1.0]})).unwrap();
+    app.sync_views();
+    app.ui.tool = Tool::Brush;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(480.0, 360.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, (app, ready): &mut (PhotocraftApp, bool)| {
+                if *ready {
+                    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| document_area(app, ui));
+                }
+            },
+            (app, false),
+        );
+    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::Pro);
+    h.state_mut().1 = true;
+    h.run_steps(3);
+    let centre = h.state().0.last_canvas_rect.center();
+    let centre = pos2(centre.x, centre.y);
+    let touch = |id: u64, phase: TouchPhase, pos: egui::Pos2| egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: TouchId(id), phase, pos, force: None };
+    let press = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    // Frame 1: finger one alone paints — the live stroke starts on the press.
+    h.input_mut().events = vec![touch(1, TouchPhase::Start, centre), press(centre, true)];
+    h.step();
+    h.run_steps(1);
+    assert!(h.state().0.drag.is_some(), "one finger starts the stroke");
+    // Frame 2: finger two lands — the interrupted stroke is cancelled whole.
+    h.input_mut().events = vec![touch(1, TouchPhase::Move, centre), touch(2, TouchPhase::Start, centre + vec2(40.0, 0.0))];
+    h.step();
+    h.run_steps(1);
+    assert!(h.state().0.drag.is_none(), "the second finger cancels the stroke");
+    let before = h.state().0.ui.views.first().expect("a view").center;
+    // Frame 3: the two fingers move together and pan.
+    h.input_mut().events = vec![
+        touch(1, TouchPhase::Move, centre - vec2(30.0, 10.0)),
+        touch(2, TouchPhase::Move, centre + vec2(10.0, 0.0)),
+        egui::Event::PointerMoved(centre - vec2(30.0, 10.0)),
+    ];
+    h.step();
+    h.run_steps(1);
+    let after = h.state().0.ui.views.first().expect("a view").center;
+    assert!(after != before, "two fingers pan the view (before {before:?}, after {after:?})");
+    // Frame 4: fingers lift; the phantom click must not paint either.
+    h.input_mut().events = vec![
+        touch(1, TouchPhase::End, centre - vec2(30.0, 10.0)),
+        touch(2, TouchPhase::End, centre + vec2(10.0, 0.0)),
+        press(centre - vec2(30.0, 10.0), false),
+    ];
+    h.step();
+    h.run_steps(2);
+    let st = h.state().0.session.active().expect("the document");
+    let buf = photocraft_compose::flatten(&st.doc);
+    assert!(
+        buf.px.iter().all(|p| p[0] < 1e-3 && p[3] < 1e-3),
+        "two fingers never paint (found {:?} …)",
+        buf.px.iter().find(|p| p[0] > 1e-3).copied()
+    );
+}

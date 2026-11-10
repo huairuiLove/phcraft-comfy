@@ -649,6 +649,19 @@ fn update_canvas_navigation(app: &mut PhotocraftApp, view: &mut View, input: Can
             }
             _ => {}
         }
+        // A second finger pans (Photoshop on iPad: fingers navigate, the tool waits for one
+        // finger). egui's MultiTouchInfo reports the fingers' average movement this frame; their
+        // pinch is already a Wheel::Zoom above (pinch_factor), and their twist a Rotate View.
+        if touch_gestures
+            && let Some(pan) = input.ctx.input(|i| i.multi_touch().map(|m| m.translation_delta))
+            && pan != Vec2::ZERO
+        {
+            view.zoom_animating = false;
+            view.zoom_anchor = None;
+            let d = input.xf.unmap_vec(pan) / (view.zoom / input.ppp);
+            view.center[0] -= d.x;
+            view.center[1] -= d.y;
+        }
         let rotate_trackpad = app.session.prefs().enhanced_controls.rotate_view_with_trackpad;
         if let Some(delta) = crate::rotate_view::trackpad_delta(input.ctx, rotate_trackpad, touch_gestures) {
             view.zoom_animating = false;
@@ -1000,6 +1013,31 @@ fn handle_canvas_tool_stroke(
     let rect = input.rect;
     let full = input.full;
     let tool = input.tool;
+    // Touch arbitration (Photoshop on iPad): while two or more fingers are down, the canvas
+    // navigates (the pan above) and the tool stands down. A gesture the second finger lands in
+    // the middle of is cancelled whole, and the phantom tap of the last finger lifting is
+    // swallowed for a moment. One finger, a pencil, and the mouse are unaffected.
+    let multi_touch = ui.input(|i| i.multi_touch().map(|m| m.num_touches).unwrap_or(1)) >= 2;
+    let arb_id = egui::Id::unique(("pc-touch-arb", input.idx));
+    let now_s = ui.input(|i| i.time);
+    let (was_multi, mut suppress_until) = ctx.data(|d| d.get_temp::<(bool, f64)>(arb_id)).unwrap_or((false, 0.0));
+    if multi_touch && !was_multi && (app.drag.is_some() || app.press_stroke) {
+        app.drag = None;
+        app.live_stroke = None;
+        app.press_stroke = false;
+    }
+    suppress_until = if multi_touch {
+        0.0
+    } else if was_multi {
+        now_s + 0.15
+    } else {
+        suppress_until
+    };
+    ctx.data_mut(|d| d.insert_temp(arb_id, (multi_touch, suppress_until)));
+    let suppressed = multi_touch || now_s < suppress_until;
+    if suppressed {
+        (buttons.started, buttons.clicked, buttons.stopped) = (false, false, false);
+    }
     // A drag is only recognised once the pointer has moved past egui's click distance: the
     // gesture starts where the button went down, not where it is now (#123).
     let gesture_active_before = app.drag.is_some();
@@ -1013,6 +1051,7 @@ fn handle_canvas_tool_stroke(
     let physical_right = app.services.right_button_down.as_ref().is_some_and(|f| f());
     let right_down = ui.input(|i| i.pointer.secondary_down()) || physical_right;
     if strokes_live(tool)
+        && !suppressed
         && !right_down
         && app.drag.is_none()
         && response.is_pointer_button_down_on()

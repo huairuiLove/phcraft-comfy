@@ -12,3 +12,5 @@ target/
 *.log
 __pycache__/
 .DS_Store
+# Standalone build output dir (the iOS and Android app build scripts write here).
+/out/

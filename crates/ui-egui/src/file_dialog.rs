@@ -60,6 +60,12 @@ pub struct FileDialogReply {
 }
 
 impl FileDialogReply {
+    /// Build one around an answer channel. For shells' off-device tests, which drive their
+    /// `file_dialog` closures the way `poll_file_dialog` does.
+    pub fn new(tx: Sender<Option<FileDialogAnswer>>, ctx: egui::Context) -> Self {
+        Self { tx, ctx }
+    }
+
     pub fn send(self, answer: Option<FileDialogAnswer>) {
         // Nothing is waiting any more when the app has quit meanwhile.
         let _ = self.tx.send(answer);

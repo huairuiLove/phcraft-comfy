@@ -1082,16 +1082,10 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
         s.spacing.icon_width = 14.0;
         s.visuals.indent_has_left_vline = false;
         s.interaction.tooltip_delay = TOOLTIP_DELAY;
-        // Thin overlay scrollbars that appear on hover (Photoshop/macOS style).
-        // Thin bars stay visible, including while the pointer is on them. The stock thin
-        // style fades the handle to the same opacity as the track, so the thumb disappears (#4611).
-        let mut scroll = if t.bevel { egui::style::ScrollStyle::solid() } else { egui::style::ScrollStyle::thin() };
-        if scroll.floating {
-            scroll.interact_handle_opacity = 1.0;
-            scroll.interact_background_opacity = 0.4;
-            scroll.floating_width = 4.0;
-        }
-        s.spacing.scroll = scroll;
+        // Thin overlay scrollbars that appear on hover (Photoshop/macOS style), or solid ones
+        // on bevel themes. Thin bars stay visible, including while the pointer is on them; the
+        // stock thin style fades the handle to the track's opacity, so the thumb disappears (#4611).
+        s.spacing.scroll = scroll_style(&t);
         s.spacing.tooltip_width = 280.0;
     });
     // egui selects its style branch using OS appearance, independently of PhotoCraft's fixed
@@ -1101,8 +1095,30 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     ctx.set_style_of(egui::Theme::Dark, style);
 }
 
+/// The theme's scroll bars: solid on bevel themes, otherwise thin floating ones that appear
+/// under the pointer, with the stock thin style's faded thumb fixed (it disappears against the
+/// track, #4611). [`super::prefs::prefs_ui::appearance::sync_touch_scroll`] widens them for a
+/// touch interface after this each frame.
+pub fn scroll_style(t: &Tokens) -> egui::style::ScrollStyle {
+    let mut scroll = if t.bevel { egui::style::ScrollStyle::solid() } else { egui::style::ScrollStyle::thin() };
+    if scroll.floating {
+        scroll.interact_handle_opacity = 1.0;
+        scroll.interact_background_opacity = 0.4;
+        scroll.floating_width = 4.0;
+    }
+    scroll
+}
+
 /// Seconds the pointer rests on a control before its tooltip shows.
 pub const TOOLTIP_DELAY: f32 = 0.35;
+
+/// Interface › Touch Interface magnification of the whole UI (targets and text; the canvas
+/// image is device-pixel based and unaffected). ~40% over the pointer density: a finger wants
+/// roughly an 11 mm target, Apple HIG's minimum.
+pub const TOUCH_UI_SCALE: f32 = 1.4;
+
+/// Touch Interface scroll bar width: a finger's grab, over the theme's thin pointer bar.
+pub const TOUCH_SCROLL_BAR_WIDTH: f32 = 16.0;
 
 /// Vertical gap between stacked control rows in panels (Properties fields, the Layers panel's
 /// Opacity and Fill rows); docks zero egui's item spacing, so rows add this themselves.

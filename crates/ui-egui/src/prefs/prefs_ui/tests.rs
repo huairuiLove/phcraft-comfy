@@ -2044,3 +2044,93 @@ fn reset_section_on_type_keeps_the_favourite_fonts() {
     assert_eq!(prefs.favorite_fonts, ["Bebas Neue"], "the favourites are kept");
     assert_eq!(stored(&store)["type"]["favoriteFonts"], json!(["Bebas Neue"]));
 }
+
+/// Interface › Touch Interface: the whole UI magnifies (the canvas image does not: View::zoom is
+/// device pixels per document pixel) and the scroll bars widen from the thin hover ones to bars a
+/// finger can grab.
+#[test]
+fn touch_interface_magnifies_the_ui_and_thickens_the_scroll_bars() {
+    // `set_zoom_factor` takes effect at the start of the next pass, so each check runs one.
+    let pass = |ctx: &egui::Context| {
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+    };
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    let ctx = egui::Context::default();
+    crate::prefs::prefs_ui::appearance::sync_display_scale(&app, &ctx);
+    pass(&ctx);
+    let base = ctx.zoom_factor();
+    assert!((base - 1.0).abs() < 1e-4, "the default scale on a 1× display");
+    app.run("prefs.set", json!({"values": {"interface.touchUi": true}})).unwrap();
+    crate::prefs::prefs_ui::appearance::sync_display_scale(&app, &ctx);
+    pass(&ctx);
+    assert!((ctx.zoom_factor() - base * crate::theme::TOUCH_UI_SCALE).abs() < 1e-4, "the touch scale multiplies the UI zoom");
+    assert!(!ctx.global_style().spacing.scroll.floating, "touch scroll bars are always visible, not hover floating");
+    // Off again: the theme's own density and bars come back.
+    app.run("prefs.set", json!({"values": {"interface.touchUi": false}})).unwrap();
+    crate::prefs::prefs_ui::appearance::sync_display_scale(&app, &ctx);
+    pass(&ctx);
+    assert!((ctx.zoom_factor() - base).abs() < 1e-4);
+    assert!(ctx.global_style().spacing.scroll.floating);
+}
+
+/// The Touch Interface factor must not move with the zoom it applies. `content_rect` shrinks as
+/// the UI magnifies (`pixels_per_point` = zoom × native), so a factor measured in egui points
+/// feeds back on itself and the whole UI oscillates between two zooms forever — on an iPad that
+/// is the page zooming endlessly with nobody touching it. The measurement has to be in design
+/// points (the screen before the touch factor), which the same physical window reports as
+/// different egui-point sizes at different zooms.
+#[test]
+fn touch_scale_is_measured_in_design_points_not_egui_points() {
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.run("prefs.set", json!({"values": {"interface.touchUi": true}})).unwrap();
+    let ctx = egui::Context::default();
+    // One window, two reports: full size at zoom 1, shrunk by the magnification once ×1.4 has
+    // applied (a bare context has no native scale and Auto keeps the base at 1, so the pass's
+    // `pixels_per_point` is the zoom factor set here).
+    let factor_for = |points: egui::Vec2, zoom_in_effect: f32| {
+        ctx.set_zoom_factor(zoom_in_effect);
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, points)),
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |_| {}).textures_delta.clear();
+        crate::prefs::prefs_ui::appearance::sync_display_scale(&app, &ctx);
+        // `set_zoom_factor` lands at the start of the next pass.
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        ctx.zoom_factor()
+    };
+    let wide = egui::vec2(1376.0, 1032.0);
+    let at_rest = factor_for(wide, 1.0);
+    let magnified = factor_for(wide / 1.4, 1.4);
+    assert!((at_rest - magnified).abs() < 1e-4, "the factor must not depend on the zoom in effect: {at_rest} vs {magnified}");
+    assert!((at_rest - crate::theme::TOUCH_UI_SCALE).abs() < 1e-4, "1376 pt wide takes the full factor");
+}
+
+/// The same feedback driven frame by frame, as the app runs it: the window keeps reporting
+/// `physical / pixels_per_point`, the factor re-syncs every frame, and the zoom must settle
+/// instead of chasing its own tail between two values.
+#[test]
+fn touch_scale_settles_instead_of_oscillating() {
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.run("prefs.set", json!({"values": {"interface.touchUi": true}})).unwrap();
+    let ctx = egui::Context::default();
+    // Sized to the oscillation band: wide enough that ×1.4 fits at zoom 1 (1376/760 > 1.4) but
+    // not once magnified (1376/1.4/760 < 1.4), which is every current iPad.
+    let physical = egui::vec2(1376.0, 1032.0);
+    let mut zooms = Vec::new();
+    for _ in 0..8 {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, physical / ctx.pixels_per_point())),
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |_| {}).textures_delta.clear();
+        crate::prefs::prefs_ui::appearance::sync_display_scale(&app, &ctx);
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        zooms.push(ctx.zoom_factor());
+    }
+    let settled = *zooms.last().unwrap();
+    assert!(
+        zooms.iter().rev().take(4).all(|z| (z - settled).abs() < 1e-4),
+        "the touch factor must settle; it kept moving: {zooms:?}"
+    );
+}

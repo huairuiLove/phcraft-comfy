@@ -309,6 +309,17 @@ pub struct Interface {
     pub notification_auto_hide: bool,
     /// Seconds a notice stays on screen before it hides itself (Auto Hide Notifications).
     pub notification_duration_seconds: u32,
+    /// Touch-first interface: magnified targets, thick scroll bars, and the canvas's finger
+    /// gestures pan and zoom instead of painting (Preferences › Interface › Touch Interface).
+    /// On by default on iPadOS and Android, where the input is fingers and a pencil.
+    pub touch_ui: bool,
+}
+
+/// The interface default: touch-first on iPadOS and Android, pointer-first everywhere else. A
+/// serde default (a missing saved field), so it follows the build's platform, not the OS the
+/// file came from.
+pub fn default_touch_ui() -> bool {
+    cfg!(any(target_os = "ios", target_os = "android"))
 }
 
 impl Default for Interface {
@@ -338,6 +349,7 @@ impl Default for Interface {
             show_file_name_in_title: true,
             notification_auto_hide: true,
             notification_duration_seconds: 6,
+            touch_ui: default_touch_ui(),
         }
     }
 }
@@ -1083,11 +1095,28 @@ pub struct Integrations {
     pub comfy_url: String,
     /// Folder the imported ComfyUI workflows live in (empty: the config dir's `comfy_workflows`).
     pub comfy_workflows_dir: String,
+    /// The OpenAI-compatible image API the iPad app generates through directly (the "Image API
+    /// Edit" workflow): base address like `https://api.example.com` (`/v1` appended when absent).
+    /// Empty: the Image API commands explain what to set.
+    pub image_api_base: String,
+    /// The image API's key, sent as `Authorization: Bearer …`. Kept in the local preferences
+    /// file only; never logged.
+    pub image_api_key: String,
+    /// The image API's model name (for example `gpt-image-2`).
+    pub image_api_model: String,
 }
 
 impl Default for Integrations {
     fn default() -> Self {
-        Self { allow_agent_control: true, control_port: 0, comfy_url: crate::comfy_cmds::DEFAULT_URL.into(), comfy_workflows_dir: String::new() }
+        Self {
+            allow_agent_control: true,
+            control_port: 0,
+            comfy_url: crate::comfy_cmds::DEFAULT_URL.into(),
+            comfy_workflows_dir: String::new(),
+            image_api_base: String::new(),
+            image_api_key: String::new(),
+            image_api_model: String::new(),
+        }
     }
 }
 

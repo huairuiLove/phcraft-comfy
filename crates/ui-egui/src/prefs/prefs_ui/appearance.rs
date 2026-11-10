@@ -170,8 +170,52 @@ pub(super) fn display_scale(pref: prefs::UiScale, native: Option<f32>) -> f32 {
 pub(super) fn sync_display_scale(app: &PhotocraftApp, ctx: &egui::Context) {
     let native = ctx.native_pixels_per_point();
     let native_scale = native.filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0);
-    let scale = display_scale(app.session.prefs().interface.ui_scale, native);
+    let base = display_scale(app.session.prefs().interface.ui_scale, native);
+    // Touch Interface magnifies everything: finger targets want ~40% more than a pointer's
+    // density. The canvas image is unaffected (View::zoom is device pixels per document
+    // pixel), exactly like a UI Scale choice. Capped so the magnified desktop layout still
+    // fits: an 11-inch iPad in portrait is 834 pt wide, and at the full touch factor the
+    // design space left (595 pt) is under the desktop minimum window (760 pt), where dialogs
+    // and the dock stop fitting — so the factor shrinks to the room there is.
+    let scale = base * touch_scale(app, ctx, base);
     ctx.set_zoom_factor(scale / native_scale);
+    sync_touch_scroll(app, ctx);
+}
+
+/// The Touch Interface factor for this frame's screen: [`crate::theme::TOUCH_UI_SCALE`] when the
+/// magnified desktop minimum still fits, shrinking towards 1 as the screen narrows below that.
+/// Measured in design points — the screen at the chosen UI Scale before the touch factor is
+/// applied — never in egui points: `content_rect` shrinks as the UI zooms (`pixels_per_point` =
+/// zoom × native), so a factor read off it feeds back on itself (zoom up → screen smaller →
+/// factor down → screen larger → …) and never settles; the whole UI then oscillates between two
+/// zooms every frame, which on an iPad reads as the page zooming endlessly by itself (no iPad is
+/// wide enough at ×1.4 for the shrunken rest to still fit, so every device lands in the cycle).
+/// Undoing the applied zoom first — `content × pixels_per_point / base` is physical size over
+/// the chosen scale, whatever zoom is current — leaves a measurement the factor cannot move.
+fn touch_scale(app: &PhotocraftApp, ctx: &egui::Context, base: f32) -> f32 {
+    if !app.session.prefs().interface.touch_ui {
+        return 1.0;
+    }
+    let design = ctx.input(|i| i.content_rect()).size() * ctx.pixels_per_point() / base;
+    let fit = (design.x / crate::touch::MIN_DESIGN_WIDTH).min(design.y / crate::touch::MIN_DESIGN_HEIGHT);
+    fit.clamp(1.0, crate::theme::TOUCH_UI_SCALE)
+}
+
+/// Interface › Touch Interface: scroll bars a finger can grab without hover — wide and always
+/// visible, not the thin floating ones that appear under a pointer. Written only on change, so
+/// a theme rebuild (which resets the style) re-syncs on the next frame.
+pub(super) fn sync_touch_scroll(app: &PhotocraftApp, ctx: &egui::Context) {
+    let t = crate::theme::Tokens::get(ctx);
+    let mut want = crate::theme::scroll_style(&t);
+    if app.session.prefs().interface.touch_ui && !t.bevel {
+        want = egui::style::ScrollStyle::solid();
+        want.bar_width = crate::theme::TOUCH_SCROLL_BAR_WIDTH;
+    }
+    ctx.global_style_mut(|s| {
+        if s.spacing.scroll != want {
+            s.spacing.scroll = want;
+        }
+    });
 }
 
 /// Interface › Show Tooltips and Tools › Show Tooltips (either one off hides them): egui never

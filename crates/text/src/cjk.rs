@@ -116,10 +116,27 @@ fn detect_locale() -> Option<String> {
     if let Some(v) = env("PHOTOCRAFT_LOCALE") {
         return Some(v);
     }
+    // An app shell with no launcher to set environment variables (iPadOS) hands the locale over
+    // here instead: `std::env::set_var` is unsafe in edition 2024, which this workspace forbids.
+    if let Some(v) = shell_locale() {
+        return Some(v);
+    }
     if let Some(v) = os_locale() {
         return Some(v);
     }
     ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"].iter().find_map(|k| env(k)).map(|v| v.split(':').next().unwrap_or("").to_string())
+}
+
+static SHELL_LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The app shell's locale override, set before the first locale read (iPadOS, where no launcher
+/// sets `PHOTOCRAFT_LOCALE`). A later set is ignored: the first locale wins, like the env var.
+pub fn set_shell_locale(locale: impl Into<String>) {
+    let _ = SHELL_LOCALE.set(locale.into());
+}
+
+fn shell_locale() -> Option<String> {
+    SHELL_LOCALE.get().cloned()
 }
 
 #[cfg(target_os = "macos")]
