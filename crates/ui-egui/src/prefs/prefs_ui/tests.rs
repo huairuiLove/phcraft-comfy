@@ -2134,3 +2134,16 @@ fn touch_scale_settles_instead_of_oscillating() {
         "the touch factor must settle; it kept moving: {zooms:?}"
     );
 }
+
+#[test]
+fn generation_backend_settings_show_only_where_they_run() {
+    // The direct Image API fields belong to the mobile apps' transport, the ComfyUI server
+    // settings to the desktop shell; each build hides the pair it cannot run.
+    let mobile = cfg!(any(target_os = "ios", target_os = "android"));
+    for key in ["imageApiBase", "imageApiKey", "imageApiModel"] {
+        assert_eq!(prefs::is_hidden(&format!("integrations.{key}")), !mobile, "{key}");
+    }
+    for key in ["comfyUrl", "comfyWorkflowsDir"] {
+        assert_eq!(prefs::is_hidden(&format!("integrations.{key}")), mobile, "{key}");
+    }
+}

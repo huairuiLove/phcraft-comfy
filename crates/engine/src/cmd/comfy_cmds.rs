@@ -15,6 +15,12 @@
 //! document). `workflow` overrides everything with a complete graph in ComfyUI's API format
 //! (ComfyUI › Workflow › Export (API)) for anything else; a custom graph's output images are
 //! placed the same way.
+//!
+//! The iPad shell injects a transport with no ComfyUI server behind it at all: it speaks the
+//! OpenAI-compatible Image API directly (`ComfyCall::ApiImage`/`ApiCheck`, the settings in
+//! Preferences ▸ Integrations). [`comfy_workflow_cmds`]' "Image API Edit" workflow routes
+//! `ai.comfyui.fill` through that call — prompt plus source image in, one image back — skipping
+//! the whole queue/poll/download protocol.
 
 use std::sync::Arc;
 
@@ -48,6 +54,12 @@ pub enum ComfyCall {
     Download { filename: String, subfolder: String, kind: String },
     /// POST /upload/image — an img2img source image.
     Upload { name: String, bytes: Vec<u8> },
+    /// The fixed OpenAI-compatible image call, no ComfyUI server in the loop (the iPad shell's
+    /// transport): `/v1/images/edits` with a source image, `/v1/images/generations` without one.
+    /// The reply is the one generated image as bytes.
+    ApiImage { base: String, key: String, model: String, prompt: String, image: Option<Vec<u8>>, timeout_s: u64 },
+    /// GET `/v1/models` — the Image API connection check. The reply is the server's model list.
+    ApiCheck { base: String, key: String },
 }
 
 /// A request: the base URL (Preferences ▸ Integrations) plus the call.
@@ -71,6 +83,10 @@ pub type ComfyFn = Arc<dyn Fn(&ComfyRequest) -> std::result::Result<ComfyReply, 
 pub struct Comfy {
     /// Set by the desktop shell at startup (`Services::comfy_transport`).
     pub transport: Option<ComfyFn>,
+    /// True when the injected transport speaks the OpenAI-compatible Image API instead of a
+    /// ComfyUI server (the iPad shell): gates the "Image API Edit" workflow and the connection
+    /// check's API branch.
+    pub image_api: bool,
     /// Where `ai.comfyui.workflows.*` keeps imported workflows: the platform config directory's
     /// `comfy_workflows` folder, set by the desktop shell (`None` on the web and headless).
     pub workflows_dir: Option<std::path::PathBuf>,
@@ -97,8 +113,8 @@ const NAME_MAX: usize = 500;
 const WORKFLOW_MAX_BYTES: usize = 1_000_000;
 const WORKFLOW_MAX_NODES: usize = 512;
 /// One generated image at most 512 MiB, 4 GiB overall (a `batch`, or a graph with many outputs).
-/// `u64`: the overall cap does not fit a wasm32 `usize`.
-const IMAGE_MAX: u64 = 512 * 1024 * 1024;
+/// `u64`: the overall cap does not fit a wasm32 `usize`. Shared with the Image API branch.
+pub(crate) const IMAGE_MAX: u64 = 512 * 1024 * 1024;
 const IMAGES_MAX: u64 = 4 * 1024 * 1024 * 1024;
 /// How often to poll `/history` while waiting for the server.
 const POLL_MS: u64 = 750;
@@ -673,6 +689,105 @@ pub(crate) fn bytes_of(r: ComfyReply) -> Result<Vec<u8>> {
     }
 }
 
+// ------------------------------------------------------------------ image API
+
+/// The Image API settings one run needs, read from Preferences ▸ Integrations and validated.
+pub(crate) struct ImageApiConfig {
+    /// The normalized base (`…/v1`) the transport joins its paths onto.
+    pub base: String,
+    pub key: String,
+    pub model: String,
+}
+
+/// The Image API base normalized for the OpenAI-compatible paths: trailing `/` trimmed, `/v1`
+/// appended unless the address already ends in it — `https://x.com` and `https://x.com/v1` both
+/// reach `https://x.com/v1/images/edits`.
+pub fn image_api_base_url(base: &str) -> std::result::Result<String, String> {
+    let trimmed = base.trim().trim_end_matches('/');
+    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+        return Err(format!("`{base}` is not an http(s) address (like https://api.example.com)"));
+    }
+    if trimmed.len() > 2_000 {
+        return Err("the Image API endpoint is too long".into());
+    }
+    if trimmed.ends_with("/v1") {
+        Ok(trimmed.to_string())
+    } else {
+        Ok(format!("{trimmed}/v1"))
+    }
+}
+
+/// The Image API preferences, validated. Bounded like every other preference string.
+pub(crate) fn image_api_of(s: &Session, cmd: &str) -> Result<ImageApiConfig> {
+    let p = &s.prefs().integrations;
+    let base = p.image_api_base.trim().to_string();
+    if base.is_empty() {
+        return Err(bad(cmd, "set Preferences ▸ Integrations ▸ Image API Endpoint first (the Image API Edit workflow generates through it)"));
+    }
+    let model = p.image_api_model.trim().to_string();
+    if model.is_empty() {
+        return Err(bad(cmd, "set Preferences ▸ Integrations ▸ Image API Model first (the model to generate with, like gpt-image-2)"));
+    }
+    if model.len() > NAME_MAX {
+        return Err(bad(cmd, format!("the Image API model is longer than {NAME_MAX} characters")));
+    }
+    let key = p.image_api_key.trim().to_string();
+    if key.len() > 4_000 {
+        return Err(bad(cmd, "the Image API key is longer than 4000 characters"));
+    }
+    let base = image_api_base_url(&base).map_err(|e| bad(cmd, format!("the Image API endpoint: {e}")))?;
+    Ok(ImageApiConfig { base, key, model })
+}
+
+/// One image of an OpenAI-compatible `/v1/images/*` reply: inline base64, or a URL to fetch.
+pub enum ImageApiImage {
+    Bytes(Vec<u8>),
+    Url(String),
+}
+
+/// The images of an image API reply, in order. An entry with neither `b64_json` nor `url` is an
+/// error, not a skip — the caller must know the server answered with nothing usable.
+pub fn image_api_images(v: &Value) -> std::result::Result<Vec<ImageApiImage>, String> {
+    let data = v.get("data").and_then(Value::as_array).ok_or_else(|| "the reply has no `data` array".to_string())?;
+    if data.len() > 32 {
+        return Err(format!("the reply lists {} images; the limit is 32", data.len()));
+    }
+    let mut out = Vec::with_capacity(data.len());
+    for entry in data {
+        if let Some(b64) = entry.get("b64_json").and_then(Value::as_str) {
+            // Base64 is 4/3 of the raw size; cap the text before decoding it.
+            if b64.len() as u64 > IMAGE_MAX * 2 {
+                return Err(format!("the reply's image is over the {} MiB limit", IMAGE_MAX / 1_048_576));
+            }
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| format!("decoding the reply's b64_json: {e}"))?;
+            out.push(ImageApiImage::Bytes(bytes));
+        } else if let Some(url) = entry.get("url").and_then(Value::as_str) {
+            if url.len() > 8_000 || !(url.starts_with("http://") || url.starts_with("https://")) {
+                return Err("the reply's image URL is not an http(s) address".into());
+            }
+            out.push(ImageApiImage::Url(url.to_string()));
+        } else {
+            return Err("a `data` entry carries neither b64_json nor url".into());
+        }
+    }
+    if out.is_empty() {
+        return Err("the reply's `data` array is empty".into());
+    }
+    Ok(out)
+}
+
+/// A generated image against the one-image cap. `len` separately so the cap is testable without
+/// allocating the bytes.
+pub(crate) fn image_within_cap(len: u64) -> Result<()> {
+    if len > IMAGE_MAX {
+        return Err(EngineError::Other(format!("the generated image is {} MiB, over the {} MiB limit", len / 1_048_576, IMAGE_MAX / 1_048_576)));
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------------ generate
 
 /// What the worker thread hands back to the UI thread.
@@ -858,6 +973,20 @@ fn check(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("ai.comfyui.check", "pass only {\"url\"}, or nothing"));
     }
     let transport = transport_of(s)?;
+    // The iPad shell's transport has no ComfyUI server behind it: the check reads the Image API's
+    // own model list instead, and says whether the configured model is offered.
+    if s.comfy.image_api {
+        let cfg = image_api_of(s, "ai.comfyui.check")?;
+        let v = json_of(
+            transport(&ComfyRequest { url: cfg.base.clone(), call: ComfyCall::ApiCheck { base: cfg.base.clone(), key: cfg.key.clone() } })
+                .map_err(|e| at("the Image API did not answer", e))?,
+        )?;
+        let offered = v
+            .get("data")
+            .and_then(Value::as_array)
+            .is_some_and(|models| models.iter().any(|m| m.get("id").and_then(Value::as_str) == Some(cfg.model.as_str())));
+        return Ok(json!({"url": cfg.base, "api": true, "model": cfg.model, "modelFound": offered, "server": v}));
+    }
     let url = url_of(s, p)?;
     let v = json_of(transport(&ComfyRequest { url: url.clone(), call: ComfyCall::SystemStats })
         .map_err(|e| at(&format!("ComfyUI at {url} did not answer"), e))?)?;
@@ -1217,5 +1346,44 @@ mod tests {
         assert_eq!(w.pointer("/52/inputs/width"), Some(&json!(992)));
         assert_eq!(w.pointer("/52/inputs/height"), Some(&json!(512)));
         assert_eq!(w.pointer("/60/inputs/denoise"), Some(&json!(0.5)));
+    }
+
+    // ------------------------------------------------------------ image API
+
+    #[test]
+    fn image_api_base_url_appends_v1_once() {
+        assert_eq!(image_api_base_url("https://api.example.com").unwrap(), "https://api.example.com/v1");
+        assert_eq!(image_api_base_url("https://api.example.com/").unwrap(), "https://api.example.com/v1");
+        assert_eq!(image_api_base_url(" https://api.example.com/v1 ").unwrap(), "https://api.example.com/v1");
+        assert_eq!(image_api_base_url("http://127.0.0.1:8000").unwrap(), "http://127.0.0.1:8000/v1");
+        for bad in ["", "api.example.com", "ftp://x.com", &"h".repeat(3_000)] {
+            assert!(image_api_base_url(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn image_api_images_reads_b64_and_url_entries_and_rejects_junk() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode([1, 2, 3]);
+        let v = json!({"data": [{"b64_json": b64}, {"url": "https://cdn.example.com/a.png"}]});
+        let images = image_api_images(&v).unwrap();
+        assert!(matches!(&images[0], ImageApiImage::Bytes(b) if b == &[1, 2, 3]));
+        assert!(matches!(&images[1], ImageApiImage::Url(u) if u == "https://cdn.example.com/a.png"));
+        // Nothing usable in an entry, an empty list, a missing data array, junk fields.
+        assert!(image_api_images(&json!({"data": [{"revised_prompt": "x"}]})).is_err());
+        assert!(image_api_images(&json!({"data": []})).is_err());
+        assert!(image_api_images(&json!({"created": 1})).is_err());
+        assert!(image_api_images(&json!({"data": [{"url": "file:///etc/passwd"}]})).is_err());
+        assert!(image_api_images(&json!({"data": [{"b64_json": "!!not base64!!"}]})).is_err());
+        let many: Vec<Value> = (0..40).map(|_| json!({"url": "https://x.com/a.png"})).collect();
+        assert!(image_api_images(&json!({"data": many})).is_err());
+    }
+
+    #[test]
+    fn image_within_cap_rejects_only_oversized_replies() {
+        assert!(image_within_cap(0).is_ok());
+        assert!(image_within_cap(IMAGE_MAX).is_ok());
+        let e = image_within_cap(IMAGE_MAX + 1).unwrap_err().to_string();
+        assert!(e.contains("over the"), "{e}");
     }
 }

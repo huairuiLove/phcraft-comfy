@@ -665,12 +665,31 @@ pub fn analyze(workflow: &Value) -> Value {
         }
     }
     let obj = workflow.as_object().map(|o| o.len()).unwrap_or(0);
-    json!({"nodes": obj, "promptNodes": prompt_nodes, "imageNodes": image_nodes, "samplerNodes": sampler_nodes})
+    json!({"nodes": obj, "promptNodes": prompt_nodes, "imageNodes": image_nodes, "samplerNodes": sampler_nodes, "api": is_api_workflow(workflow)})
 }
 
 // ------------------------------------------------------------------ workflow store
 
 const BUILTIN_FLUX3: &str = "FLUX.3 Klein Image Edit";
+
+/// The fixed OpenAI-compatible Image API workflow (the iPad app): its single node names no
+/// ComfyUI class at all — [`fill`] routes it to one direct `ComfyCall::ApiImage` call instead of
+/// queueing a graph. The `prompt` input is what the panel's prompt box targets (the API-style
+/// fallback in [`inject`]); `negative_prompt` documents what the call has no counterpart for.
+pub const BUILTIN_IMAGE_API: &str = "Image API Edit";
+
+/// The "Image API Edit" graph, shaped like an API-format workflow so it flows through the store
+/// (`valid_workflow`, `analyze`) like any other.
+fn builtin_api_workflow() -> Value {
+    json!({"1": {"class_type": "PhotocraftImageApi", "inputs": {"prompt": "", "negative_prompt": ""}}})
+}
+
+/// A workflow whose generation is one direct Image API call, not a ComfyUI graph a server runs.
+pub fn is_api_workflow(workflow: &Value) -> bool {
+    workflow.as_object().is_some_and(|o| {
+        o.values().any(|n| n.get("class_type").and_then(Value::as_str) == Some("PhotocraftImageApi"))
+    })
+}
 
 /// The workflows compiled into the app, importable with zero setup.
 fn builtin_workflows() -> Vec<(&'static str, Value)> {
@@ -712,6 +731,9 @@ fn load_workflow(s: &Session, name: &str) -> Result<Value> {
             return Ok(v);
         }
     }
+    if s.comfy.image_api && name == BUILTIN_IMAGE_API {
+        return Ok(builtin_api_workflow());
+    }
     let safe = safe_name(name).ok_or_else(|| bad("ai.comfyui.fill", format!("`workflow` `{name}` is not a valid workflow name")))?;
     let path = workflows_dir(s)?.join(format!("{safe}.json"));
     let bytes = read_store_file(&path)?;
@@ -740,6 +762,10 @@ fn list_workflows(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = Vec::new();
     for (name, v) in builtin_workflows() {
         out.push(json!({"name": name, "builtin": true, "path": Value::Null, "analyze": analyze(&v)}));
+    }
+    if s.comfy.image_api {
+        let v = builtin_api_workflow();
+        out.push(json!({"name": BUILTIN_IMAGE_API, "builtin": true, "path": Value::Null, "analyze": analyze(&v)}));
     }
     if let Ok(dir) = workflows_dir(s)
         && let Ok(entries) = std::fs::read_dir(&dir)
@@ -822,7 +848,7 @@ fn remove_workflow(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "ai.comfyui.workflows.remove";
     let name = p.get("name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| bad(CMD, "`name` must be the workflow to remove"))?;
     let safe = safe_name(name).ok_or_else(|| bad(CMD, format!("`{name}` is not a valid workflow name")))?;
-    if builtin_workflows().iter().any(|(n, _)| *n == safe) {
+    if builtin_workflows().iter().any(|(n, _)| *n == safe) || safe == BUILTIN_IMAGE_API {
         return Err(bad(CMD, format!("`{safe}` is built in and cannot be removed")));
     }
     let path = workflows_dir(s)?.join(format!("{safe}.json"));
@@ -1011,8 +1037,6 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "ai.comfyui.fill";
     let params = fill_params(p)?;
     let workflow = load_workflow(s, &params.workflow)?;
-    let transport = transport_fn(s)?;
-    let url = comfy_cmds::url_of(s, p)?;
     let st = s.active().ok_or_else(|| bad(CMD, "generation needs an open document (the source image comes from it)"))?;
     let doc = st.doc.clone();
     let selection = doc.selection.clone();
@@ -1023,6 +1047,12 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     if params.source == FillSource::Layer && active.is_none() {
         return Err(bad(CMD, "`source` \"layer\" needs an active layer"));
     }
+    // The Image API workflow bypasses the whole ComfyUI protocol: no server to upload to or poll.
+    if is_api_workflow(&workflow) {
+        return fill_image_api(s, params, doc, selection, active);
+    }
+    let transport = transport_fn(s)?;
+    let url = comfy_cmds::url_of(s, p)?;
     let seed = params.seed.unwrap_or_else(comfy_cmds::random_seed);
     let client_id = format!("photocraft-fill-{:016x}", comfy_cmds::now_millis());
     let workflow_name = params.workflow.clone();
@@ -1048,48 +1078,102 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
             let generation = comfy_cmds::queue_and_collect(ctx, &call, &wf, &client_id, &workflow_name, "custom", seed, params.timeout_s)?;
             Ok(FillOutcome { generation, injected, prompt: params.prompt.clone(), workflow: workflow_name.clone(), seed })
         },
-        move |s: &mut Session, outcome: FillOutcome| {
-            let created = comfy_cmds::now_millis();
-            let mut indices = Vec::with_capacity(outcome.generation.images.len());
-            for bytes in outcome.generation.images {
-                indices.push(push_result(
-                    s,
-                    StoredResult { bytes, seed: outcome.seed, prompt: outcome.prompt.clone(), workflow: outcome.workflow.clone(), selection: selection.clone(), created_ms: created, file: None },
-                ));
-            }
-            let shelf: Vec<(Vec<u8>, u64, Option<Surface>)> = indices
-                .iter()
-                .filter_map(|&i| s.comfy.results.get(i).map(|r| (r.bytes.clone(), r.seed, r.selection.clone())))
-                .collect();
-            if shelf.len() != indices.len() {
-                return Err(EngineError::Other("a result vanished before it could be placed".into()));
-            }
-            let mut placed = Vec::new();
-            match place {
-                FillPlace::Layer => {
-                    for (bytes, _, selection) in &shelf {
-                        placed.push(place_result_layer(s, bytes, selection.as_ref())?);
-                    }
-                }
-                FillPlace::Native => {
-                    for (bytes, _, selection) in &shelf {
-                        placed.push(place_result_native(s, bytes, selection.as_ref())?);
-                    }
-                }
-                FillPlace::Document => {
-                    for (bytes, seed, _) in &shelf {
-                        placed.push(crate::cmd::file_cmds::open_bytes_as(s, &format!("ComfyUI {seed}.png"), bytes, None, None)?);
-                    }
-                }
-                FillPlace::None => {}
-            }
-            Ok(json!({
-                "results": indices, "placed": placed, "place": match place { FillPlace::None => "none", FillPlace::Layer => "layer", FillPlace::Native => "native", FillPlace::Document => "document" },
-                "seed": outcome.seed, "seconds": outcome.generation.waited_ms / 1000,
-                "promptId": outcome.generation.prompt_id, "injected": outcome.injected.to_json(),
-            }))
-        },
+        move |s: &mut Session, outcome: FillOutcome| fill_done(s, outcome, &selection, place),
     )
+}
+
+/// `ai.comfyui.fill` behind the "Image API Edit" workflow: the source image and the prompt go to
+/// the OpenAI-compatible endpoint in one call, the generated image comes straight back — nothing
+/// of the ComfyUI protocol runs. Negative prompt, steps and seed have no API counterpart (the
+/// seed still varies per run so shelf entries stay distinguishable).
+fn fill_image_api(s: &mut Session, params: FillParams, doc: std::sync::Arc<Document>, selection: Option<Surface>, active: Option<LayerId>) -> Result<Value> {
+    const CMD: &str = "ai.comfyui.fill";
+    if params.prompt.trim().is_empty() {
+        return Err(bad(CMD, "the Image API needs a prompt (there is no workflow that could carry a baked-in one)"));
+    }
+    let cfg = comfy_cmds::image_api_of(s, CMD)?;
+    let transport = transport_fn(s)?;
+    let seed = params.seed.unwrap_or_else(comfy_cmds::random_seed);
+    let workflow_name = params.workflow.clone();
+    let prompt = params.prompt.clone();
+    let place = params.place;
+    jobs::run(
+        s,
+        "Generate (Image API)",
+        false,
+        move |ctx: &JobCtx| {
+            ctx.progress(0.02, "Preparing the source image…");
+            let png = source_png(&doc, params.source, active)?;
+            ctx.progress(0.08, &format!("Generating with {} (Image API)…", cfg.model));
+            let started = std::time::Instant::now();
+            let reply = transport(&ComfyRequest {
+                url: cfg.base.clone(),
+                call: ComfyCall::ApiImage { base: cfg.base.clone(), key: cfg.key.clone(), model: cfg.model.clone(), prompt: prompt.clone(), image: Some(png), timeout_s: params.timeout_s },
+            })
+            .map_err(|e| comfy_cmds::at("the Image API call", e))?;
+            ctx.check()?;
+            let bytes = comfy_cmds::bytes_of(reply)?;
+            if bytes.is_empty() {
+                return Err(EngineError::Other("the Image API returned an empty image".into()));
+            }
+            comfy_cmds::image_within_cap(bytes.len() as u64)?;
+            ctx.progress(1.0, "Done");
+            let generation = comfy_cmds::Generation {
+                images: vec![bytes],
+                model: cfg.model.clone(),
+                family: "api",
+                seed,
+                prompt_id: format!("api-{:016x}", comfy_cmds::now_millis()),
+                waited_ms: started.elapsed().as_millis() as u64,
+            };
+            Ok(FillOutcome { generation, injected: Injected::default(), prompt, workflow: workflow_name, seed })
+        },
+        move |s: &mut Session, outcome: FillOutcome| fill_done(s, outcome, &selection, place),
+    )
+}
+
+/// What the UI thread does with any finished fill, whichever backend ran it: shelf the images,
+/// then place them as the task asked.
+fn fill_done(s: &mut Session, outcome: FillOutcome, selection: &Option<Surface>, place: FillPlace) -> Result<Value> {
+    let created = comfy_cmds::now_millis();
+    let mut indices = Vec::with_capacity(outcome.generation.images.len());
+    for bytes in outcome.generation.images {
+        indices.push(push_result(
+            s,
+            StoredResult { bytes, seed: outcome.seed, prompt: outcome.prompt.clone(), workflow: outcome.workflow.clone(), selection: selection.clone(), created_ms: created, file: None },
+        ));
+    }
+    let shelf: Vec<(Vec<u8>, u64, Option<Surface>)> = indices
+        .iter()
+        .filter_map(|&i| s.comfy.results.get(i).map(|r| (r.bytes.clone(), r.seed, r.selection.clone())))
+        .collect();
+    if shelf.len() != indices.len() {
+        return Err(EngineError::Other("a result vanished before it could be placed".into()));
+    }
+    let mut placed = Vec::new();
+    match place {
+        FillPlace::Layer => {
+            for (bytes, _, selection) in &shelf {
+                placed.push(place_result_layer(s, bytes, selection.as_ref())?);
+            }
+        }
+        FillPlace::Native => {
+            for (bytes, _, selection) in &shelf {
+                placed.push(place_result_native(s, bytes, selection.as_ref())?);
+            }
+        }
+        FillPlace::Document => {
+            for (bytes, seed, _) in &shelf {
+                placed.push(crate::cmd::file_cmds::open_bytes_as(s, &format!("ComfyUI {seed}.png"), bytes, None, None)?);
+            }
+        }
+        FillPlace::None => {}
+    }
+    Ok(json!({
+        "results": indices, "placed": placed, "place": match place { FillPlace::None => "none", FillPlace::Layer => "layer", FillPlace::Native => "native", FillPlace::Document => "document" },
+        "seed": outcome.seed, "seconds": outcome.generation.waited_ms / 1000,
+        "promptId": outcome.generation.prompt_id, "injected": outcome.injected.to_json(),
+    }))
 }
 
 // ------------------------------------------------------------------ place / save
@@ -1529,9 +1613,11 @@ mod tests {
     thread_local! {
         static CALLS: std::cell::RefCell<Vec<(&'static str, String)>> = const { std::cell::RefCell::new(Vec::new()) };
         static UPLOADS: std::cell::RefCell<Vec<Vec<u8>>> = const { std::cell::RefCell::new(Vec::new()) };
+        static API_CALLS: std::cell::RefCell<Vec<Value>> = const { std::cell::RefCell::new(Vec::new()) };
     }
 
-    /// A transport that answers like ComfyUI, recording the upload name and queued workflow.
+    /// A transport that answers like ComfyUI, recording the upload name and queued workflow. The
+    /// Image API arms record the call and answer like an OpenAI-compatible endpoint.
     fn mock_transport() -> ComfyFn {
         let png = test_png();
         std::sync::Arc::new(move |req: &ComfyRequest| match &req.call {
@@ -1549,6 +1635,19 @@ mod tests {
                 "9": {"images": [{"filename": "out.png", "subfolder": "", "type": "output"}]}},
                 "status": {"status_str": "success"}}}))),
             ComfyCall::Download { .. } => Ok(ComfyReply::Bytes(png.clone())),
+            ComfyCall::ApiImage { base, key, model, prompt, image, .. } => {
+                API_CALLS.with(|c| {
+                    c.borrow_mut().push(json!({
+                        "url": req.url, "base": base, "key": key, "model": model, "prompt": prompt,
+                        "image": image.as_ref().map(|b| b.len()),
+                    }))
+                });
+                Ok(ComfyReply::Bytes(png.clone()))
+            }
+            ComfyCall::ApiCheck { base, key } => {
+                API_CALLS.with(|c| c.borrow_mut().push(json!({"check": true, "base": base, "key": key})));
+                Ok(ComfyReply::Json(json!({"data": [{"id": "gpt-image-2"}, {"id": "other"}]})))
+            }
             _ => Ok(ComfyReply::Json(Value::Null)),
         })
     }
@@ -1872,5 +1971,115 @@ mod tests {
         assert!(!safe_generation_name("notes.txt"));
         assert!(!safe_generation_name("7.png"));
         assert!(!safe_generation_name(""));
+    }
+
+    // ------------------------------------------------------------ Image API workflow
+
+    fn api_session() -> Session {
+        let mut s = doc_with_selection();
+        s.comfy.image_api = true;
+        s.prefs.edit(|p| {
+            p.integrations.image_api_base = "https://api.example.com".into();
+            p.integrations.image_api_key = "sk-test".into();
+            p.integrations.image_api_model = "gpt-image-2".into();
+        });
+        s
+    }
+
+    #[test]
+    fn image_api_workflow_lists_and_analyzes_only_with_the_api_transport() {
+        let names = |s: &mut Session| {
+            s.execute("ai.comfyui.workflows.list", json!({})).unwrap()["workflows"]
+                .as_array()
+                .map(|a| a.iter().map(|w| w["name"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let mut s = doc_with_selection();
+        let plain = names(&mut s);
+        assert!(plain.contains(&"FLUX.3 Klein Image Edit".to_string()));
+        assert!(!plain.contains(&BUILTIN_IMAGE_API.to_string()), "no API transport, no API workflow");
+        // The built-in is removable neither way.
+        assert!(s.execute("ai.comfyui.workflows.remove", json!({"name": BUILTIN_IMAGE_API})).is_err());
+        let mut s = api_session();
+        assert!(names(&mut s).contains(&BUILTIN_IMAGE_API.to_string()));
+        let listed = s.execute("ai.comfyui.workflows.list", json!({})).unwrap();
+        let api = listed["workflows"].as_array().unwrap().iter().find(|w| w["name"] == BUILTIN_IMAGE_API).cloned().unwrap();
+        assert_eq!(api["builtin"], json!(true));
+        assert_eq!(api["analyze"]["api"], json!(true));
+        assert_eq!(api["analyze"]["promptNodes"], json!(["1"]));
+        // A plain ComfyUI graph keeps its plain analysis.
+        let mut wf = builtin_workflows().into_iter().next().unwrap().1;
+        assert_eq!(analyze(&wf)["api"], json!(false));
+        wf = builtin_api_workflow();
+        assert!(is_api_workflow(&wf) && comfy_cmds::valid_workflow(&wf));
+    }
+
+    #[test]
+    fn fill_routes_the_image_api_workflow_to_one_direct_call() {
+        let mut s = api_session();
+        CALLS.with(|c| c.borrow_mut().clear());
+        let r = s.execute("ai.comfyui.fill", json!({"workflow": BUILTIN_IMAGE_API, "prompt": "a red dress", "place": "none"})).unwrap();
+        // One image straight onto the shelf, with the API's bookkeeping.
+        assert_eq!(s.comfy.results.len(), 1);
+        assert_eq!(s.comfy.results[0].prompt, "a red dress");
+        assert_eq!(s.comfy.results[0].workflow, BUILTIN_IMAGE_API);
+        assert!(r["promptId"].as_str().is_some_and(|id| id.starts_with("api-")), "{}", r);
+        assert_eq!(r["injected"]["promptNodes"], json!([]));
+        // Exactly one Image API call, and none of the ComfyUI protocol around it.
+        let calls = API_CALLS.with(|c| c.borrow().clone());
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert_eq!(calls[0]["base"], json!("https://api.example.com/v1"));
+        assert_eq!(calls[0]["model"], json!("gpt-image-2"));
+        assert_eq!(calls[0]["prompt"], json!("a red dress"));
+        assert_eq!(calls[0]["url"], json!("https://api.example.com/v1"));
+        assert!(calls[0]["image"].as_u64().is_some_and(|n| n > 0), "the source png went along");
+        assert!(CALLS.with(|c| c.borrow().is_empty()), "no upload or queue happened");
+        // The result places like any other (the same shelf).
+        let p = s.execute("ai.comfyui.place", json!({"result": 0, "as": "layer"})).unwrap();
+        assert!(p.get("layer").is_some());
+    }
+
+    #[test]
+    fn fill_image_api_validates_settings_and_prompt_before_any_call() {
+        let cases: Vec<(Value, &str)> = vec![
+            (json!({"workflow": BUILTIN_IMAGE_API, "prompt": "p"}), "Image API Endpoint"),
+            // A prompt is required: no workflow could carry a baked-in one.
+            (json!({"workflow": BUILTIN_IMAGE_API}), "needs a prompt"),
+        ];
+        let mut s = api_session();
+        s.prefs.edit(|p| p.integrations.image_api_base.clear());
+        for (p, want) in &cases {
+            let e = s.execute("ai.comfyui.fill", p.clone()).unwrap_err().to_string();
+            assert!(e.contains(want), "{e}");
+        }
+        s.prefs.edit(|p| p.integrations.image_api_base = "https://api.example.com".into());
+        let e = s.execute("ai.comfyui.fill", json!({"workflow": BUILTIN_IMAGE_API})).unwrap_err().to_string();
+        assert!(e.contains("needs a prompt"), "{e}");
+        s.prefs.edit(|p| p.integrations.image_api_model.clear());
+        let e = s.execute("ai.comfyui.fill", json!({"workflow": BUILTIN_IMAGE_API, "prompt": "p"})).unwrap_err().to_string();
+        assert!(e.contains("Image API Model"), "{e}");
+        s.prefs.edit(|p| p.integrations.image_api_model = "gpt-image-2".into());
+        s.prefs.edit(|p| p.integrations.image_api_base = "ftp://nope".into());
+        let e = s.execute("ai.comfyui.fill", json!({"workflow": BUILTIN_IMAGE_API, "prompt": "p"})).unwrap_err().to_string();
+        assert!(e.contains("not an http(s) address"), "{e}");
+        // Without the flag the workflow is not loadable at all (the desktop has its own built-ins).
+        let mut desktop = doc_with_selection();
+        assert!(desktop.execute("ai.comfyui.fill", json!({"workflow": BUILTIN_IMAGE_API, "prompt": "p"})).is_err());
+        assert!(API_CALLS.with(|c| c.borrow().is_empty()));
+    }
+
+    #[test]
+    fn check_reports_the_image_api_and_whether_the_model_is_offered() {
+        let mut s = api_session();
+        let r = s.execute("ai.comfyui.check", json!({})).unwrap();
+        assert_eq!(r["api"], json!(true));
+        assert_eq!(r["model"], json!("gpt-image-2"));
+        assert_eq!(r["modelFound"], json!(true), "the mock lists gpt-image-2");
+        s.prefs.edit(|p| p.integrations.image_api_model = "not-offered".into());
+        let r = s.execute("ai.comfyui.check", json!({})).unwrap();
+        assert_eq!(r["modelFound"], json!(false));
+        // An unset endpoint says what to set, and the ComfyUI branch is untouched without the flag.
+        let mut s = doc_with_selection();
+        assert_eq!(s.execute("ai.comfyui.check", json!({})).unwrap()["api"], json!(null));
     }
 }

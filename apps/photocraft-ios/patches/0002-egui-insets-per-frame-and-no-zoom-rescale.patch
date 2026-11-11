@@ -1,0 +1,78 @@
+diff --git a/crates/egui-winit/src/lib.rs b/crates/egui-winit/src/lib.rs
+index 8e7315ad..f4523dbc 100644
+--- a/crates/egui-winit/src/lib.rs
++++ b/crates/egui-winit/src/lib.rs
+@@ -56,6 +56,8 @@ mod ime_reset;
+ mod ime_surrounding;
+ mod output_selector;
+ mod safe_area;
++
++use egui::SafeAreaInsets;
+ mod window_settings;
+ 
+ pub use window_settings::{WindowGeometry, WindowSettings};
+@@ -2095,6 +2097,22 @@ impl State {
+             .or_default()
+             .native_pixels_per_point = Some(window.scale_factor() as f32);
+ 
++        // iOS: refresh the safe area every frame, converted into egui points. UIKit reports
++        // insets in UIKit points (physical / native scale) while egui consumes egui points
++        // (physical / (native * zoom)); reading them only on Resized/Focused events also froze
++        // the pre-zoom conversion (zoom 1.0 at launch), leaving the raw value in place.
++        #[cfg(target_os = "ios")]
++        {
++            let zoom = self.egui_ctx.zoom_factor().max(1e-3);
++            let SafeAreaInsets(m) = safe_area::get_safe_area_insets();
++            self.egui_input.safe_area_insets = Some(SafeAreaInsets(egui::epaint::MarginF32 {
++                left: m.left / zoom,
++                right: m.right / zoom,
++                top: m.top / zoom,
++                bottom: m.bottom / zoom,
++            }));
++        }
++
+         self.egui_input.take()
+     }
+ 
+@@ -2143,10 +2161,9 @@ impl State {
+             | WindowEvent::ScaleFactorChanged { .. }
+             | WindowEvent::Focused(true)
+             | WindowEvent::Occluded(false) => {
+-                // Once winit v0.31 has been released this can be reworked to get the safe area from
+-                // `Window::safe_area`, and updated from a new event which is being discussed in
+-                // https://github.com/rust-windowing/winit/issues/3911.
+-                self.egui_input_mut().safe_area_insets = Some(safe_area::get_safe_area_insets());
++                // The safe area is refreshed (and converted to egui points) every frame in
++                // `take_egui_input`; writing the raw UIKit-point value here fought it.
++                ();
+             }
+             _ => {}
+         }
+diff --git a/crates/egui/src/context.rs b/crates/egui/src/context.rs
+index 96442019..7fd84787 100644
+--- a/crates/egui/src/context.rs
++++ b/crates/egui/src/context.rs
+@@ -478,17 +478,13 @@ impl ContextImpl {
+         let viewport = self.viewports.entry(viewport_id).or_default();
+ 
+         if is_outermost_viewport && let Some(new_zoom_factor) = self.new_zoom_factor.take() {
+-            let ratio = self.memory.options.zoom_factor / new_zoom_factor;
+             self.memory.options.zoom_factor = new_zoom_factor;
+-
+-            let input = &viewport.input;
+-            // This is a bit hacky, but is required to avoid jitter:
+-            let mut rect = input.content_rect();
+-            rect.min = (ratio * rect.min.to_vec2()).to_pos2();
+-            rect.max = (ratio * rect.max.to_vec2()).to_pos2();
+-            new_raw_input.screen_rect = Some(rect);
+-            // We should really scale everything else in the input too,
+-            // but the `screen_rect` is the most important part.
++            // The upstream hack that also rescaled `screen_rect` by the zoom ratio (to keep
++            // egui windows in place across zooms) is removed: a shell that derives its zoom
++            // FROM the content size (PhotoCraft's Touch Interface scale) reads the poisoned
++            // rect back, recomputes a different zoom, and the two chase each other forever —
++            // the whole interface oscillated between zooms on a partial-size iPad window.
++            // The true screen rect from the platform stands.
+         }
+         let native_pixels_per_point = new_raw_input
+             .viewport()

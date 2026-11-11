@@ -1,0 +1,65 @@
+[package]
+name = "photocraft-ios"
+description = "PhotoCraft for iPadOS (eframe native runner, Metal, touch UI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[features]
+# Open HEIC/HEIF photos (the optional photocraft-heif crate). Not default so distributors choose
+# it; official builds (CI, packaging/, release) build with `--features heif`.
+heif = ["photocraft-codecs/heif"]
+
+# The workspace lints, except `unsafe_code = "forbid"`: src/picker.rs copies the (name, bytes)
+# pairs the ObjC document picker delivers across the C ABI — raw pointer reads with no safe
+# alternative, and the only unsafe in this crate (each block carries its SAFETY comment), in
+# the spirit of `crates/tablet`'s isolated OS interop.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"
+
+[[bin]]
+name = "photocraft-ios"
+path = "src/main.rs"
+
+[dependencies]
+photocraft-codecs = { workspace = true }
+photocraft-doc = { workspace = true }
+photocraft-engine = { workspace = true }
+photocraft-io = { workspace = true }
+photocraft-raster = { workspace = true }
+photocraft-text = { workspace = true }
+photocraft-ui-egui = { workspace = true }
+serde_json = { workspace = true }
+eframe = { workspace = true, features = ["wgpu"] }
+egui = { workspace = true }
+log = { workspace = true }
+# The Image API transport (src/api_gen.rs): like the desktop app's ComfyUI client, but with TLS —
+# the endpoints are remote and https. MIT/Apache-2.0, inside the licence allowlist.
+ureq = { version = "3.5", default-features = false, features = ["json", "multipart", "rustls"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# The system locale, for the interface language and the CJK script default (`PHOTOCRAFT_LOCALE`;
+# crates/text `cjk.rs`). The same safe objc2 stack the egui-winit fork uses. Pinned exactly to
+# match the rest of the objc2 code: review the diff before bumping.
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSLocale", "NSString"] }
+# Idle-timer disable: a painting app keeps the display on while in front (the OS auto-locks an
+# idle iPad after two minutes, which read as the screen "going black"). Safe UIKit calls only.
+objc2-ui-kit = { version = "=0.3.2", default-features = false, features = ["std", "UIApplication", "UIScreen", "UIScene", "UISceneDefinitions", "UIView", "UIWindowScene"] }
+
+[build-dependencies]
+# Compiles the ObjC scene delegate (ios/PCSceneDelegate.m) into the binary on iOS targets.
+cc = "1"
+
+[dev-dependencies]
+# The transport test decodes the local server's inline b64_json reply.
+base64 = "0.22"

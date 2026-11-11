@@ -1,0 +1,56 @@
+diff --git a/src/platform_impl/ios/window.rs b/src/platform_impl/ios/window.rs
+index a386ecaa..4a1aa999 100644
+--- a/src/platform_impl/ios/window.rs
++++ b/src/platform_impl/ios/window.rs
+@@ -184,18 +184,43 @@ impl Inner {
+     }
+ 
+     pub fn inner_size(&self) -> PhysicalSize<u32> {
+-        let scale_factor = self.scale_factor();
+-        let safe_area = self.safe_area_screen_space();
+-        let size = LogicalSize {
+-            width: safe_area.size.width as f64,
+-            height: safe_area.size.height as f64,
+-        };
+-        size.to_physical(scale_factor)
++        // The drawable covers the whole window on iOS (the CAMetalLayer spans the view, and
++        // egui renders edge to edge under the status bar), so inner_size must NOT subtract the
++        // safe area: eframe sizes the wgpu surface from it, and an inset-subtracted surface is
++        // stretched anisotropically onto the full-screen layer at present — a 6.6% vertical
++        // stretch on the iPad Pro 11, which desynchronised taps from the UI more the further
++        // down the screen they landed. egui learns the safe area through RawInput's
++        // safe_area_insets instead.
++        self.outer_size()
+     }
+ 
+     pub fn outer_size(&self) -> PhysicalSize<u32> {
+         let scale_factor = self.scale_factor();
+-        let screen_frame = self.screen_frame();
++        // The window's model bounds, NOT `screen_frame()`: that converts through
++        // `convertRect:toCoordinateSpace:`, which returns the PRESENTATION-layer geometry —
++        // mid-animation values while a (stuck, repeating) window geometry animation runs on
++        // iPadOS 26, making the reported size sweep ~10% up and down forever. The app chased
++        // that with its UI zoom and the whole interface jittered. `bounds.size` is the stable
++        // model value, which is what a size query means.
++        let screen_frame = self.window.bounds();
++        if std::env::var_os("PHOTOCRAFT_DEBUG_IOS").is_some() {
++            let b = self.window.bounds();
++            if let Some(home) = std::env::var_os("HOME") {
++                use std::io::Write as _;
++                let path = std::path::Path::new(&home).join("Documents/pcos.log");
++                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
++                    let _ = writeln!(
++                        f,
++                        "bounds=({:.1},{:.1}) converted=({:.1},{:.1}) scale={}",
++                        b.size.width,
++                        b.size.height,
++                        screen_frame.size.width,
++                        screen_frame.size.height,
++                        scale_factor
++                    );
++                }
++            }
++        }
+         let size = LogicalSize {
+             width: screen_frame.size.width as f64,
+             height: screen_frame.size.height as f64,

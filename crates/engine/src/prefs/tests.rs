@@ -1152,3 +1152,29 @@ fn an_effect_cache_above_the_cap_loads_clamped_and_does_not_block_apply() {
         assert_eq!(s.execute("prefs.get", json!({"path": "fileHandling.recentFileCount"})).unwrap(), json!(7), "{saved} MB");
     }
 }
+
+/// The Image API settings (the iPad app's direct generation backend) default empty, round-trip
+/// through save/load, and old preferences files without them still load.
+#[test]
+fn image_api_settings_default_empty_and_round_trip() {
+    let p = Integrations::default();
+    assert_eq!((p.image_api_base, p.image_api_key, p.image_api_model), (String::new(), String::new(), String::new()));
+    let mut s = session();
+    // A preferences file from before the fields existed still loads, with them empty.
+    let legacy = json!({"integrations": {"comfyUrl": "http://127.0.0.1:8188"}}).to_string();
+    s.load_prefs_json(&legacy).unwrap();
+    assert_eq!(s.prefs().integrations.image_api_base, "");
+    assert_eq!(s.prefs().integrations.image_api_key, "");
+    assert_eq!(s.prefs().integrations.image_api_model, "");
+    let saved = json!({"integrations": {
+        "imageApiBase": "https://api.example.com",
+        "imageApiKey": "sk-test",
+        "imageApiModel": "gpt-image-2",
+    }});
+    s.load_prefs_json(&saved.to_string()).unwrap();
+    assert_eq!(s.prefs().integrations.image_api_base, "https://api.example.com");
+    assert_eq!(s.prefs().integrations.image_api_key, "sk-test");
+    assert_eq!(s.prefs().integrations.image_api_model, "gpt-image-2");
+    // The ComfyUI defaults survive the new fields.
+    assert_eq!(s.prefs().integrations.comfy_url, crate::comfy_cmds::DEFAULT_URL);
+}

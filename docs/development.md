@@ -624,6 +624,34 @@ How the web shell (`apps/photocraft-web/src/web.rs`) differs from desktop:
 - Headless Chrome on macOS (`--headless=new --enable-unsafe-webgpu`) gets a real WebGPU adapter.
 
 
+## iPadOS build (apps/photocraft-ios)
+
+The same ui-egui shell on eframe's native runner over Metal. A plain Rust binary — winit's iOS
+backend calls `UIApplicationMain` itself, so there is no Objective-C bootstrap and no exported
+symbols — placed into the .app bundle by the Xcode project's script phase, which runs
+`apps/photocraft-ios/ios/build.sh` (cargo for `aarch64-apple-ios` / `aarch64-apple-ios-sim`,
+chosen from `PLATFORM_NAME`; `PROFILE` env picks the Cargo profile, release by default).
+
+- One-time: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`. Xcode with the iOS
+  SDK is required (device signing needs it too; the simulator does not).
+- Simulator: `apps/photocraft-ios/ios/build.sh out PhotoCraft iphonesimulator arm64`, then
+  `xcrun simctl install <udid> out/PhotoCraft.app` and `xcrun simctl launch <udid>
+  ai.storyteller.photocraft.ios`. Device sideloading with a free Apple ID (7-day profile) and
+  the signing steps are in `apps/photocraft-ios/README.md`.
+- Fonts: the sandbox reads no system font files, so build with the craft-fonts checkout present
+  (`ios/build.sh` exports `CRAFT_FONTS_DIR` from the sibling `../craft-fonts` automatically),
+  or non-Latin interface text has no glyphs. The system locale comes from NSLocale via
+  `cjk::set_shell_locale`.
+- Touch: `interface.touchUi` (on by default on iOS builds) magnifies the UI, thickens the
+  scroll bars, pads the safe area, and lets two fingers pan/pinch the canvas while tools wait
+  for one finger (gated by `enhanced_controls.touchGestures`). Apple Pencil force flows through
+  winit's iOS touch events into the stylus feed.
+- Gate for this crate: `cargo check -p photocraft-ios --target aarch64-apple-ios` plus
+  `xcodebuild -project apps/photocraft-ios/ios/PhotoCraft.xcodeproj -target PhotoCraft -sdk
+  iphonesimulator build`. `cargo xtask wasm` covers the crates it depends on; the app itself is
+  L7 and not part of default-members.
+
+
 ## Indexed Color timings
 
 `cargo run --release -p photocraft-engine --example indexed_color_perf -- image.png` measures

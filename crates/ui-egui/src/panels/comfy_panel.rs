@@ -417,7 +417,22 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 
 // ---- connection
 
+/// True when the picked workflow is the fixed Image API one (one direct call: no negative
+/// prompt, seed or steps to show). An empty pick is the first listed, like the picker itself.
+fn api_workflow_selected(app: &PhotocraftApp) -> bool {
+    let selected = if app.ui.comfy_panel.workflow.is_empty() {
+        app.comfy_queue.workflows.first()
+    } else {
+        app.comfy_queue.workflows.iter().find(|w| w.0 == app.ui.comfy_panel.workflow)
+    };
+    selected.is_some_and(|(_, _, analyze)| analyze.get("api") == Some(&json!(true)))
+}
+
 fn connection(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+    if app.session.comfy.image_api {
+        connection_api(app, ui);
+        return;
+    }
     ui.horizontal(|ui| {
         ui.strong("Server");
         let check = app.comfy_queue.check.clone().unwrap_or_else(|| "not checked".into());
@@ -445,6 +460,64 @@ fn connection(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The Image API counterpart of [`connection`] (the iPad app): the endpoint, model and key every
+/// direct call uses, and a Check that asks the endpoint for its model list.
+fn connection_api(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.strong("Image API");
+        let check = app.comfy_queue.check.clone().unwrap_or_else(|| "not checked".into());
+        let bad = check.starts_with("✗");
+        ui.colored_label(if bad { Color32::LIGHT_RED } else { Color32::LIGHT_GREEN }, if bad { "✗" } else { "✓" });
+        ui.label(egui::RichText::new(check).small().weak());
+    });
+    let i = app.session.prefs().integrations.clone();
+    let (mut base, mut model, mut key) = (i.image_api_base.clone(), i.image_api_model.clone(), i.image_api_key.clone());
+    let commit = |app: &mut PhotocraftApp, base: &str, model: &str, key: &str| {
+        app.session.prefs.edit(|p| {
+            p.integrations.image_api_base = base.trim().trim_end_matches('/').to_string();
+            p.integrations.image_api_model = model.trim().to_string();
+            p.integrations.image_api_key = key.trim().to_string();
+        });
+        app.comfy_queue.check = None;
+    };
+    ui.horizontal(|ui| {
+        ui.label("Endpoint");
+        let r = egui::TextEdit::singleline(&mut base).desired_width(ui.available_width() - 70.0).hint_text("https://api.example.com").show(ui);
+        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            commit(app, &base, &model, &key);
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("Model");
+        let r = egui::TextEdit::singleline(&mut model).desired_width(ui.available_width() - 70.0).hint_text("gpt-image-2").show(ui);
+        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            commit(app, &base, &model, &key);
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("Key");
+        let r = egui::TextEdit::singleline(&mut key).password(true).desired_width(ui.available_width() - 70.0).show(ui);
+        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            commit(app, &base, &model, &key);
+        }
+        if ui.button("Check").clicked() {
+            match app.run("ai.comfyui.check", json!({})) {
+                Ok(v) if v.get("api") == Some(&json!(true)) => {
+                    let model = v.get("model").and_then(Value::as_str).unwrap_or("?").to_string();
+                    let found = v.get("modelFound").and_then(Value::as_bool).unwrap_or(false);
+                    app.comfy_queue.check = Some(if found {
+                        format!("Image API ready — {model}")
+                    } else {
+                        format!("✗ the endpoint answers, but its model list has no {model}")
+                    });
+                }
+                Ok(_) => app.comfy_queue.check = Some("✗ unexpected reply".into()),
+                Err(e) => app.comfy_queue.check = Some(format!("✗ {e}")),
+            }
+        }
+    });
+}
+
 // ---- workflow picker
 
 fn workflow(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
@@ -458,7 +531,11 @@ fn workflow(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 ui.selectable_value(&mut app.ui.comfy_panel.workflow, name.clone(), label).clicked();
             }
         });
-        if ui.button("Import…").clicked() {
+        // Imported workflows need the store folder (the config dir's `comfy_workflows`): without
+        // one (the iPad app) there is nowhere to import into — and only ComfyUI graphs to import.
+        let can_import =
+            app.session.comfy.workflows_dir.is_some() || !app.session.prefs().integrations.comfy_workflows_dir.trim().is_empty();
+        if can_import && ui.button("Import…").clicked() {
             let _ = app.pick_file_bytes_filtered(&["json"], |app, name, _bytes| {
                 let r = app.run("ai.comfyui.workflows.import", json!({"path": name})).map_err(|e| e.to_string())?;
                 refresh_workflows(app);
@@ -497,6 +574,9 @@ fn workflow(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             .small()
             .weak(),
         );
+        if api_workflow_selected(app) {
+            ui.label(egui::RichText::new("One direct Image API call — the prompt and the sent image; the endpoint and model are above.").small().weak());
+        }
     }
 }
 
@@ -594,11 +674,14 @@ fn prompt(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         app.ui.comfy_panel.prompt = p.prompt.clone();
         persist_options(app);
     }
-    ui.label(egui::RichText::new("Negative").small());
-    let r = egui::TextEdit::multiline(&mut p.negative).desired_rows(1).desired_width(f32::INFINITY).show(ui);
-    if r.response.changed() {
-        app.ui.comfy_panel.negative = p.negative.clone();
-        persist_options(app);
+    // The Image API call has no negative-prompt counterpart, so the box would write into a void.
+    if !api_workflow_selected(app) {
+        ui.label(egui::RichText::new("Negative").small());
+        let r = egui::TextEdit::multiline(&mut p.negative).desired_rows(1).desired_width(f32::INFINITY).show(ui);
+        if r.response.changed() {
+            app.ui.comfy_panel.negative = p.negative.clone();
+            persist_options(app);
+        }
     }
     if changed {
         app.ui.comfy_panel.template = p.template.clone();
@@ -640,26 +723,30 @@ fn prompt(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 
 fn params(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let mut p = app.ui.comfy_panel.clone();
+    // The Image API call takes neither seed nor steps; batch still runs several calls.
+    let api = api_workflow_selected(app);
     ui.horizontal(|ui| {
-        ui.label("Seed");
-        let r = egui::TextEdit::singleline(&mut p.seed).desired_width(70.0).hint_text("random").show(ui);
-        if r.response.changed() {
-            app.ui.comfy_panel.seed = p.seed.clone();
-            persist_options(app);
+        if !api {
+            ui.label("Seed");
+            let r = egui::TextEdit::singleline(&mut p.seed).desired_width(70.0).hint_text("random").show(ui);
+            if r.response.changed() {
+                app.ui.comfy_panel.seed = p.seed.clone();
+                persist_options(app);
+            }
+            if ui.button("🎲").clicked() {
+                let s = (now_ms() % 900_000_000_000) as i64;
+                app.ui.comfy_panel.seed = s.to_string();
+                persist_options(app);
+            }
+            ui.separator();
+            ui.label("Steps");
+            let r = egui::TextEdit::singleline(&mut p.steps).desired_width(40.0).hint_text("default").show(ui);
+            if r.response.changed() {
+                app.ui.comfy_panel.steps = p.steps.clone();
+                persist_options(app);
+            }
+            ui.separator();
         }
-        if ui.button("🎲").clicked() {
-            let s = (now_ms() % 900_000_000_000) as i64;
-            app.ui.comfy_panel.seed = s.to_string();
-            persist_options(app);
-        }
-        ui.separator();
-        ui.label("Steps");
-        let r = egui::TextEdit::singleline(&mut p.steps).desired_width(40.0).hint_text("default").show(ui);
-        if r.response.changed() {
-            app.ui.comfy_panel.steps = p.steps.clone();
-            persist_options(app);
-        }
-        ui.separator();
         ui.label("Batch");
         let mut batch = p.batch as i32;
         let r = egui::DragValue::new(&mut batch).range(1..=8);

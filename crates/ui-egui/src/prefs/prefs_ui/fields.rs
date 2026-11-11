@@ -36,6 +36,9 @@ pub(super) fn humanize(key: &str) -> String {
         "automaticallyCheckUpdates" => return "Automatically Check for Updates".into(),
         "comfyUrl" => return "ComfyUI Server URL".into(),
         "comfyWorkflowsDir" => return "ComfyUI Workflows Folder".into(),
+        "imageApiBase" => return "Image API Endpoint".into(),
+        "imageApiKey" => return "Image API Key".into(),
+        "imageApiModel" => return "Image API Model".into(),
         _ => {}
     }
     // These controls appear only for WebP, so reuse the existing translated labels.

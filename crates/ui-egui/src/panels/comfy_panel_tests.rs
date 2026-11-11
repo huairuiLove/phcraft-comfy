@@ -69,3 +69,52 @@ fn fill_without_params_reports_the_engine_reason() {
     assert!(e.contains("desktop app"), "{e}");
     assert!(!h.state().ui.panels.comfy);
 }
+
+/// The Image API backend (the iPad app's transport shape): the panel lists the fixed API
+/// workflow beside the ComfyUI built-in, queues a task, and the direct call lands on the shelf.
+#[test]
+fn image_api_backend_lists_and_runs_the_api_workflow() {
+    use photocraft_codecs::{ChannelLayout, EncodeOptions, Format, Image};
+    use photocraft_engine::comfy_cmds::{ComfyCall, ComfyReply, ComfyRequest};
+    // A 4×4 opaque PNG, as the endpoint would return one.
+    let png = {
+        let img = Image::from_u8(4, 4, ChannelLayout::Rgba, vec![255; 64]).unwrap();
+        photocraft_codecs::encode(&img, Format::Png, &EncodeOptions::default()).unwrap()
+    };
+    let mut app = fresh_app();
+    app.session.comfy.image_api = true;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let record = seen.clone();
+    app.session.comfy.transport = Some(std::sync::Arc::new(move |req: &ComfyRequest| {
+        let api = matches!(req.call, ComfyCall::ApiImage { .. } | ComfyCall::ApiCheck { .. });
+        record.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(api);
+        match &req.call {
+            ComfyCall::ApiCheck { .. } => Ok(ComfyReply::Json(json!({"data": [{"id": "gpt-image-2"}]}))),
+            ComfyCall::ApiImage { .. } => Ok(ComfyReply::Bytes(png.clone())),
+            _ => Ok(ComfyReply::Json(serde_json::Value::Null)),
+        }
+    }));
+    app.session.prefs.edit(|p| {
+        p.integrations.image_api_base = "https://api.example.com".into();
+        p.integrations.image_api_key = "sk-test".into();
+        p.integrations.image_api_model = "gpt-image-2".into();
+    });
+    app.ui.panels.comfy = true;
+    let mut h = harness(app);
+    h.run_steps(6);
+    {
+        let s = h.state();
+        let names: Vec<&str> = s.comfy_queue.workflows.iter().map(|w| w.0.as_str()).collect();
+        assert!(names.contains(&"Image API Edit") && names.contains(&"FLUX.3 Klein Image Edit"), "{names:?}");
+    }
+    // One direct fill through the app (the queue's scheduler runs the same command): the API
+    // call lands on the shelf. The queue rows themselves are not drawn here — their ✕ marks
+    // have no glyph in the test font stack.
+    let r = h.state_mut().run("ai.comfyui.fill", json!({"workflow": "Image API Edit", "prompt": "a red dress", "place": "none"})).expect("fill runs");
+    assert!(r["promptId"].as_str().is_some_and(|id| id.starts_with("api-")), "{r}");
+    // No repaint after the fill: the gallery's ✕ remove buttons have no glyph in the test font
+    // stack (a pre-existing harness gap; the desktop falls back to system fonts).
+    assert_eq!(h.state().session.comfy.results.len(), 1, "the generated image is on the shelf");
+    let calls = seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    assert!(!calls.is_empty() && calls.iter().all(|api| *api), "only Image API calls happened: {calls:?}");
+}

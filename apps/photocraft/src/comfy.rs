@@ -42,6 +42,9 @@ fn call(url: &str, call: &ComfyCall) -> Result<ComfyReply, String> {
             &[("filename", filename), ("subfolder", subfolder), ("type", kind)],
         )?)),
         ComfyCall::Upload { name, bytes } => Ok(ComfyReply::Json(upload(url, name, bytes)?)),
+        // The Image API backend is the iPad app's transport; this one only speaks ComfyUI.
+        ComfyCall::ApiImage { .. } => Err("the desktop app generates through a ComfyUI server; the direct Image API runs on the iPad".into()),
+        ComfyCall::ApiCheck { .. } => Err("the desktop app checks a ComfyUI server; the direct Image API runs on the iPad".into()),
     }
 }
 
