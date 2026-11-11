@@ -95,13 +95,24 @@
 			files = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/build.sh",
+				"$(SRCROOT)/../../Cargo.toml",
+				"$(SRCROOT)/../../apps/photocraft-ios/Cargo.toml",
+				"$(SRCROOT)/../../apps/photocraft-ios/src/main.rs",
+				"$(SRCROOT)/../../apps/photocraft-ios/src/picker.rs",
+				"$(SRCROOT)/../../apps/photocraft-ios/src/api_gen.rs",
+				"$(SRCROOT)/../../apps/photocraft-ios/src/long_press.rs",
+				"$(SRCROOT)/../../apps/photocraft-ios/ios/PCSceneDelegate.m",
+				"$(SRCROOT)/../../apps/photocraft-ios/ios/PCDocumentPicker.m",
+				"$(SRCROOT)/../../apps/photocraft-ios/ios/PhotoCraft/Info.plist",
 			);
 			name = "Build the PhotoCraft binary with Cargo";
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/photocraft-ios.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nsh \"$SRCROOT/build.sh\" \"$BUILT_PRODUCTS_DIR\" \"$PRODUCT_NAME\" \"$PLATFORM_NAME\" \"$ARCHS\"\n";
+			shellScript = "set -e\nsh \"$SRCROOT/build.sh\" \"$BUILT_PRODUCTS_DIR\" \"$PRODUCT_NAME\" \"$PLATFORM_NAME\" \"$ARCHS\"\ntouch \"$DERIVED_FILE_DIR/photocraft-ios.stamp\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

@@ -80,7 +80,9 @@ if [ -z "${CRAFT_FONTS_DIR:-}" ] && [ -d "$REPO/../craft-fonts/fonts" ]; then
 fi
 
 echo "building photocraft-ios for $TARGET ($PROFILE)…"
-cargo build --profile "$PROFILE" --target "$TARGET" -p photocraft-ios
+# --offline keeps cargo from a network round-trip on every Xcode Run; the fingerprint check
+# below makes repeats cheap, and an actually-needed dependency update is a deliberate act.
+cargo build --profile "$PROFILE" --target "$TARGET" --offline -p photocraft-ios
 
 BIN="target/$TARGET/$PROFILE/photocraft-ios"
 if [ ! -f "$BIN" ]; then
