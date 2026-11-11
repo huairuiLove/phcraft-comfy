@@ -1,9 +1,9 @@
-//! Long-press → context menu, the touch answer to the right-click (an iPad has no pointer
-//! button). iPadOS itself maps long-press to context menus for UIKit controls; for the egui UI
-//! the shell synthesizes one: when a finger holds still for half a second, a Secondary
-//! press+release pair is injected at the touch position and every existing right-click menu in
-//! the app opens unchanged. The finger's own events are swallowed from then until it lifts, so
-//! its release cannot click through the menu that just opened.
+//! Long-press → context menu, the touch answer to the right-click (a tablet has no pointer
+//! button). iPadOS and Android themselves map long-press to context menus for their controls;
+//! for the egui UI the touch shells synthesize one: when a finger holds still for half a
+//! second, a Secondary press+release pair is injected at the touch position and every existing
+//! right-click menu in the app opens unchanged. The finger's own events are swallowed from then
+//! until it lifts, so its release cannot click through the menu that just opened.
 
 use std::time::Duration;
 

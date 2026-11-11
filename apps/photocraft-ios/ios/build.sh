@@ -6,6 +6,12 @@
 # and usable standalone with the same four arguments, e.g. from the repo root:
 #   apps/photocraft-ios/ios/build.sh out PhotoCraft iphonesimulator arm64
 #
+# The Xcode script phase is marked alwaysOutOfDate, so this runs on every build: the app is the
+# whole crates/* workspace, which no static Xcode input list can cover. cargo's own fingerprint
+# check makes an unchanged tree a no-op (about a second). The executable is this phase's
+# declared output, which is what makes Xcode re-sign the bundle after the copy — a copy the
+# signer does not know about leaves an unsigned .app that will not install.
+#
 # The Xcode environment names the SDK (PLATFORM_NAME) and architectures (ARCHS);
 # PROFILE selects the Cargo profile, release by default (debug: PROFILE=debug).
 set -eu
@@ -92,7 +98,12 @@ fi
 
 APP="$OUT_DIR/$PRODUCT.app"
 mkdir -p "$APP"
+# Always replace the executable: it is the phase's declared output in PhotoCraft.xcodeproj, and
+# Xcode re-runs CodeSign only after this phase rewrites a declared output (with no output
+# declared, the copied binary was left unsigned and would not install). The copy also updates
+# the output's timestamp, which is how Xcode sees it change.
 cp "$BIN" "$APP/$PRODUCT"
+echo "installed $(wc -c < "$APP/$PRODUCT" | tr -d ' ') bytes into $APP/$PRODUCT"
 # Standalone runs (simctl install) need the bundle metadata too; under Xcode the Info.plist
 # step provides it, so only fill in what's missing. The placeholders are Xcode build settings;
 # standalone they get the same values the target's settings carry.
@@ -104,4 +115,3 @@ if [ ! -f "$APP/Info.plist" ]; then
         "$(dirname "$0")/PhotoCraft/Info.plist" > "$APP/Info.plist"
     printf 'APPL????' > "$APP/PkgInfo"
 fi
-echo "installed $(wc -c < "$APP/$PRODUCT" | tr -d ' ') bytes into $APP/$PRODUCT"

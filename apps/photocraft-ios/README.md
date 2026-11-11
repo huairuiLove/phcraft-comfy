@@ -23,6 +23,25 @@ the embedded craft-fonts faces: `ios/build.sh` picks up the documented sibling c
 it the build works but non-Latin interface text shows missing glyphs. The system locale (for the
 interface language and the CJK script choice) is read from `NSLocale` at startup.
 
+## What the Xcode project contains
+
+`ios/PhotoCraft.xcodeproj` looks nearly empty when you open it, and that is the design, not a
+broken project. It has one target, `PhotoCraft`, with one build phase, "Build the PhotoCraft
+binary with Cargo", which runs `ios/build.sh` (a `cargo build` for the chosen iOS target) and
+copies the resulting binary into `PhotoCraft.app`; Xcode signs the finished bundle. There are no
+Swift or Objective-C sources in the target: the app is the Rust crate next to `ios/`, and the two
+small ObjC bridges (`PCSceneDelegate.m`, `PCDocumentPicker.m`) are compiled by `build.rs` with
+`cc`.
+
+So the navigator holds references, not the build: `Info.plist`, `Products/PhotoCraft.app`, and
+the "PhotoCraft (Rust crate)" group with the files the cargo phase builds. Edit any of them in
+the group (or in your Rust editor), press Run. The phase runs on every build and lets cargo's
+fingerprint decide what to rebuild: an unchanged tree costs a couple of seconds (cargo no-op,
+copy, re-sign). The executable is declared as the phase's output, which is what makes Xcode
+re-sign the bundle after the copy — with no output declared, Xcode skipped CodeSign and the
+`.app` stayed unsigned. Do not move the `.m` files into the target's Compile Sources phase:
+`build.rs` already compiles them, and compiling them twice fails to link.
+
 ## Build
 
 One-time: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim` (a C compiler for the

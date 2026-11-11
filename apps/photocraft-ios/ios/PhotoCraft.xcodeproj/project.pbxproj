@@ -7,8 +7,17 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		AA2C0001000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.info; name = Info.plist; path = PhotoCraft/Info.plist; sourceTree = "<group>"; };
+		AA2C0001000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = PhotoCraft/Info.plist; sourceTree = "<group>"; };
 		AA2C0001000000000000000D /* PhotoCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PhotoCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA2C00010000000000000012 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		AA2C00010000000000000013 /* Cargo.toml */ = {isa = PBXFileReference; lastKnownFileType = text; path = Cargo.toml; sourceTree = "<group>"; };
+		AA2C00010000000000000014 /* build.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = build.rs; sourceTree = "<group>"; };
+		AA2C00010000000000000015 /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; name = main.rs; path = src/main.rs; sourceTree = "<group>"; };
+		AA2C00010000000000000016 /* picker.rs */ = {isa = PBXFileReference; lastKnownFileType = text; name = picker.rs; path = src/picker.rs; sourceTree = "<group>"; };
+		AA2C00010000000000000017 /* api_gen.rs */ = {isa = PBXFileReference; lastKnownFileType = text; name = api_gen.rs; path = src/api_gen.rs; sourceTree = "<group>"; };
+		AA2C00010000000000000018 /* PCSceneDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = PCSceneDelegate.m; path = ios/PCSceneDelegate.m; sourceTree = "<group>"; };
+		AA2C00010000000000000019 /* PCDocumentPicker.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = PCDocumentPicker.m; path = ios/PCDocumentPicker.m; sourceTree = "<group>"; };
+		AA2C0001000000000000001A /* build.sh */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.shellscript; name = build.sh; path = ios/build.sh; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -26,8 +35,31 @@
 			isa = PBXGroup;
 			children = (
 				AA2C0001000000000000000C /* Info.plist */,
+				AA2C00010000000000000011 /* PhotoCraft (Rust crate) */,
 				AA2C0001000000000000000B /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		/* Reference-only group: these files are what the cargo script phase builds (or, for the
+		   .m files, what build.rs compiles with cc). They are deliberately NOT in any build
+		   phase — adding the .m files to Compile Sources would compile them twice, and the .rs
+		   files are not Xcode sources. Its `path = ..` is the crate directory next to the
+		   .xcodeproj, so the navigator shows the real tree instead of an empty project. */
+		AA2C00010000000000000011 /* PhotoCraft (Rust crate) */ = {
+			isa = PBXGroup;
+			children = (
+				AA2C00010000000000000012 /* README.md */,
+				AA2C00010000000000000013 /* Cargo.toml */,
+				AA2C00010000000000000014 /* build.rs */,
+				AA2C00010000000000000015 /* main.rs */,
+				AA2C00010000000000000016 /* picker.rs */,
+				AA2C00010000000000000017 /* api_gen.rs */,
+				AA2C00010000000000000018 /* PCSceneDelegate.m */,
+				AA2C00010000000000000019 /* PCDocumentPicker.m */,
+				AA2C0001000000000000001A /* build.sh */,
+			);
+			name = "PhotoCraft (Rust crate)";
+			path = ..;
 			sourceTree = "<group>";
 		};
 		AA2C0001000000000000000B /* Products */ = {
@@ -91,23 +123,20 @@
 /* Begin PBXShellScriptBuildPhase section */
 		AA2C00010000000000000009 /* Build the PhotoCraft binary with Cargo */ = {
 			isa = PBXShellScriptBuildPhase;
+			/* Cargo is the only fingerprint that covers the whole workspace (the app is
+			   crates/* as much as apps/photocraft-ios/src), so the phase runs on every build
+			   and lets cargo decide what to rebuild: an unchanged tree costs about a second.
+			   Declaring a hand-maintained input list here is what went wrong before — it
+			   pointed at paths that do not exist and missed every edit under crates/. */
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/build.sh",
-				"$(SRCROOT)/../../Cargo.toml",
-				"$(SRCROOT)/../../apps/photocraft-ios/Cargo.toml",
-				"$(SRCROOT)/../../apps/photocraft-ios/src/main.rs",
-				"$(SRCROOT)/../../apps/photocraft-ios/src/picker.rs",
-				"$(SRCROOT)/../../apps/photocraft-ios/src/api_gen.rs",
-				"$(SRCROOT)/../../apps/photocraft-ios/src/long_press.rs",
-				"$(SRCROOT)/../../apps/photocraft-ios/ios/PCSceneDelegate.m",
-				"$(SRCROOT)/../../apps/photocraft-ios/ios/PCDocumentPicker.m",
-				"$(SRCROOT)/../../apps/photocraft-ios/ios/PhotoCraft/Info.plist",
 			);
 			name = "Build the PhotoCraft binary with Cargo";
 			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/$(PRODUCT_NAME)",
 				"$(DERIVED_FILE_DIR)/photocraft-ios.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -177,6 +206,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 42H6NLN7CR;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PhotoCraft/Info.plist;
@@ -201,6 +231,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 42H6NLN7CR;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PhotoCraft/Info.plist;

@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 
 use photocraft_codecs::{ChannelLayout, EncodeOptions, Image};
 use photocraft_doc::Document;
+use photocraft_ui_egui::long_press::LongPress;
 use photocraft_ui_egui::theme::ThemeKind;
 
-/// The last tap's received position, painted as a crosshair under `PHOTOCRAFT_DEBUG_IOS`.
+// The last tap's received position, painted as a crosshair under `PHOTOCRAFT_DEBUG_IOS`.
 thread_local! {
     static LAST_TAP: std::cell::RefCell<Option<egui::Pos2>> = const { std::cell::RefCell::new(None) };
 }
@@ -19,7 +20,6 @@ use objc2_ui_kit::UICoordinateSpace;
 
 // Unconditional: the services() below references it on every host (clippy, tests); the
 // extern "C" pc_* symbols only link on iOS, where the ObjC file is compiled in.
-mod long_press;
 mod picker;
 // Unconditional too: the transport links everywhere and its tests run on the host.
 mod api_gen;
@@ -145,8 +145,9 @@ fn native_options() -> eframe::NativeOptions {
 struct IosShell {
     app: PhotocraftApp,
     frames: u32,
-    /// Long-press → the synthesized right-click that opens the context menus (long_press.rs).
-    long_press: long_press::LongPress,
+    /// Long-press → the synthesized right-click that opens the context menus (the shared
+    /// `photocraft_ui_egui::long_press`).
+    long_press: LongPress,
 }
 
 impl IosShell {
@@ -187,7 +188,7 @@ impl IosShell {
             app.set_wgpu(rs);
             app.start_compositor(&cc.egui_ctx);
         }
-        Self { app, frames: 0, long_press: long_press::LongPress::default() }
+        Self { app, frames: 0, long_press: LongPress::default() }
     }
 }
 
