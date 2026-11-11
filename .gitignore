@@ -19,4 +19,8 @@ xcuserdata/
 *.xcuserstate
 # Standalone build output dir (the iOS and Android app build scripts write here).
 /out/
+# The Android app's APK build products and its machine-local debug keystore (a fresh clone
+# generates one; see apps/photocraft-android/README.md).
+apps/photocraft-android/android/build/
+apps/photocraft-android/android/debug.keystore
 .zcode/

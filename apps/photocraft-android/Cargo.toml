@@ -1,0 +1,58 @@
+[package]
+name = "photocraft-android"
+description = "PhotoComfy for Android (eframe native runner, wgpu on Vulkan, touch UI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The workspace lints, except `unsafe_code = "forbid"`: android-activity 0.6's entry convention
+# is a `#[unsafe(no_mangle)] fn android_main`, an unsafe *attribute* the `unsafe_code` lint
+# rejects (eframe's own hello_android example hits the same wall). The crate contains no unsafe
+# blocks besides it — and the JNI pointer reads in `platform.rs`, each with its SAFETY comment —
+# as `crates/tablet` is for its OS interop.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"
+
+# The APK's `android.app.NativeActivity` loads this crate as `libphotocraft_android.so`
+# (see android/build.sh); the file browser is host-testable, so the core deps are unconditional.
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "photocraft_android"
+
+[dependencies]
+photocraft-codecs = { workspace = true }
+photocraft-doc = { workspace = true }
+photocraft-engine = { workspace = true }
+photocraft-io = { workspace = true }
+photocraft-raster = { workspace = true }
+photocraft-text = { workspace = true }
+photocraft-ui-egui = { workspace = true }
+serde_json = { workspace = true }
+egui = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { workspace = true, features = ["wgpu", "android-native-activity"] }
+# `AndroidApp` (for `NativeOptions::android_app`) and the entry symbol convention come from
+# winit's re-export of android-activity, so the glue crate is linked exactly once. Pinned like
+# the desktop app's winit dep; the [patch.crates-io] fork provides it.
+winit = { version = "=0.30.13", default-features = false, features = ["android-native-activity"] }
+# The system locale for the interface language and the CJK script default, as in the web build;
+# JNI stays inside this crate (as it must for any locale read on Android).
+sys-locale = "=0.3.2"
+# The one JNI call the shell makes itself (the all-files-access settings jump, `platform.rs`).
+# Pinned to the tree's single locked version so there is exactly one JNI glue crate.
+jni = "0.22"
+
+# The browser's click flow, replayed off-device like ui-egui's ios_tap_flow_tests.
+[target.'cfg(not(target_os = "android"))'.dev-dependencies]
+eframe = { workspace = true, features = ["wgpu"] }
+egui_kittest = { workspace = true, features = ["eframe"] }
