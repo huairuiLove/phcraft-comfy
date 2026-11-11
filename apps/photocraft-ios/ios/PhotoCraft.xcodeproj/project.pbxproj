@@ -177,7 +177,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 42H6NLN7CR;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PhotoCraft/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -201,7 +201,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 42H6NLN7CR;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PhotoCraft/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
