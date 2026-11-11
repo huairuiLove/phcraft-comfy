@@ -18,6 +18,7 @@ pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> f32 {
     let mut edge = if rtl { ui.cursor().right() } else { ui.cursor().left() };
     let lang = crate::i18n::current();
     let mut clicked: Option<String> = None;
+    crate::press_menu::maintain(ui.ctx());
     let t = crate::theme::Tokens::get(ui.ctx());
     let mut nav = crate::menu_nav::Nav::load(ui.ctx());
     // The keyboard on the bar (#4988): Alt / F10 focus, Alt+letter, mnemonics.
@@ -28,6 +29,8 @@ pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> f32 {
     let preferred: Vec<Option<char>> = TOP_MENUS.iter().map(|top| crate::menu_keys::TOP_PREFERRED.iter().find(|(t, _)| t == top).map(|(_, c)| *c)).collect();
     // A title with no Latin letter shows its English key: "文件(F)" (#5863).
     let (top_labels, top_mnemonics) = crate::menu_keys::localized(&translated, &TOP_MENUS, &preferred);
+    // The titles' popup ids, for the gesture cleanup after the closure below.
+    let mut title_popups: Vec<egui::Id> = Vec::with_capacity(TOP_MENUS.len());
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let v = &mut ui.style_mut().visuals;
@@ -61,10 +64,14 @@ pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> f32 {
                 // render as submenus.
                 let bar = egui::containers::menu::MenuConfig::find(ui);
                 let config = egui::containers::menu::MenuConfig::new().close_behavior(bar.close_behavior).style(bar.style.clone());
-                let open = title_press(ui.ctx(), &title);
+                let popup = egui::Popup::default_response_id(&title);
+                title_popups.push(popup);
+                let touch_tap = crate::press_menu::touch_tap_pending(ui.ctx(), popup);
+                let open = title_press(&title);
                 // The release ending the press that opened this menu is a click "outside" the
-                // popup: it must not close it again.
-                let opening = title.clicked() && ui.ctx().data(|d| d.get_temp::<bool>(press_gesture_id())).unwrap_or(false);
+                // popup: it must not close it again. The same for a finger's lift, which opened
+                // (or closed) the menu itself.
+                let opening = title.clicked() && (crate::press_menu::owns_gesture(ui.ctx(), popup) || touch_tap);
                 let close = if opening {
                     egui::PopupCloseBehavior::IgnoreClicks
                 } else if *top == "Help" {
@@ -128,9 +135,14 @@ pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> f32 {
     nav.store(ui.ctx());
     // No menu open this frame: nothing is kept.
     app.menu_cache = built.into_inner();
-    // The press-drag gesture ends with the button (its release was handled by the rows above).
-    if ui.input(|i| i.pointer.primary_released() || !i.pointer.primary_down()) {
-        ui.ctx().data_mut(|d| d.remove::<bool>(press_gesture_id()));
+    // The bar's own press-drag gesture ends with the button (its release was handled by the rows
+    // above) — and only the bar's own: the bar draws before the panels, so a footer press menu's
+    // release is still to come this frame and its gesture must survive this cleanup.
+    if ui.input(|i| i.pointer.primary_released() || !i.pointer.primary_down())
+        && let Some(owner) = crate::press_menu::gesture_owner(ui.ctx())
+        && title_popups.contains(&owner)
+    {
+        crate::press_menu::end_gesture(ui.ctx());
     }
     if let Some(id) = clicked {
         let ctx = ui.ctx().clone();
@@ -154,32 +166,19 @@ pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> f32 {
     edge
 }
 
-fn press_gesture_id() -> egui::Id {
-    egui::Id::unique("menu-press-gesture")
+/// A menu title's open/close command this frame. On the mouse the press opens a closed menu (and
+/// starts a press-drag gesture: releasing on an item runs it) or closes an open one; a finger
+/// taps on the lift instead; the release never toggles, so the menu doesn't blink. The titles
+/// share the press menus' gesture bookkeeping (`press_menu`).
+fn title_press(title: &egui::Response) -> Option<egui::SetOpenCommand> {
+    crate::press_menu::open_command(title, egui::Popup::default_response_id(title))
 }
 
-/// A menu title's open/close command this frame, the press opens a closed menu (and
-/// starts a press-drag gesture: releasing on an item runs it) or closes an open one; the release
-/// never toggles, so the menu doesn't blink.
-fn title_press(ctx: &egui::Context, title: &egui::Response) -> Option<egui::SetOpenCommand> {
-    // A press this frame on the title (still down, or a whole click within one frame).
-    let pressed = ctx.input(|i| i.pointer.primary_pressed()) && (title.is_pointer_button_down_on() || title.clicked());
-    if !pressed {
-        return None;
-    }
-    let open = egui::Popup::is_id_open(ctx, egui::Popup::default_response_id(title));
-    if !open {
-        ctx.data_mut(|d| d.insert_temp(press_gesture_id(), true));
-    }
-    Some(egui::SetOpenCommand::Bool(!open))
-}
-
-/// Did the press-drag gesture that opened the menus end over `item` (released on it)?
+/// Did the press-drag gesture that opened the menus end over `item` (released on it)? Only one
+/// press-drag gesture (a title's or a press menu's) runs at a time — one pointer — and while one
+/// does, no other menu's items are under the pointer, so which popup owns it doesn't matter here.
 pub(super) fn released_on(ui: &egui::Ui, item: &egui::Response) -> bool {
-    item.enabled()
-        && item.contains_pointer()
-        && ui.input(|i| i.pointer.primary_released())
-        && ui.ctx().data(|d| d.get_temp::<bool>(press_gesture_id())).unwrap_or(false)
+    item.enabled() && item.contains_pointer() && ui.input(|i| i.pointer.primary_released()) && crate::press_menu::any_gesture(ui.ctx())
 }
 
 /// True only when the pointer can actually reach a menu title. A tall submenu can be

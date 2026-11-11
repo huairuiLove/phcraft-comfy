@@ -792,6 +792,8 @@ mod input_tests;
 #[cfg(test)]
 mod empty_workspace_tests;
 #[cfg(test)]
+mod footer_touch_tap_tests;
+#[cfg(test)]
 mod home_chrome_tests;
 
 #[cfg(test)]

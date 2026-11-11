@@ -1,8 +1,12 @@
 //! Popup menu buttons that behave like native menus (#2071), as Photoshop's Layers panel footer
-//! buttons do: the menu opens on the press, so one gesture can press the button, drag onto an item
-//! and release to choose it. A plain click still opens the menu and leaves it open for a second
-//! click; a release on nothing (or back on the button) chooses nothing. A secondary click opens it
-//! too. The menu bar has its own copy of this gesture in `menus.rs`, which also spans titles.
+//! buttons do: on the mouse the menu opens on the press, so one gesture can press the button,
+//! drag onto an item and release to choose it. A plain click still opens the menu and leaves it
+//! open for a second click; a release on nothing (or back on the button) chooses nothing. A
+//! secondary click opens it too. A finger taps instead: it opens (and closes) on the lift, and a
+//! click only runs the item it pressed on — a finger drifts a few points between touch-down and
+//! lift, and egui credits a press in the sliver between a button and its flush menu to the menu
+//! (the top layer wins the distance tie), so a press-open menu lets a drifting tap run the item
+//! beside the finger. The menu bar shares this gesture in `menus.rs`, which also spans titles.
 
 use egui::{Popup, PopupCloseBehavior, Response, SetOpenCommand, Ui};
 
@@ -10,30 +14,100 @@ fn gesture_id() -> egui::Id {
     egui::Id::unique("press-menu-gesture")
 }
 
-/// The popup whose button's press started the current press-drag gesture, if any. Several press
-/// menus run in one frame (the Layers footer has two): each owns only its own gesture.
-fn gesture_owner(ctx: &egui::Context) -> Option<egui::Id> {
+/// The press-menu button a finger is down on: its tap toggles the menu on the lift (see
+/// [`open_command`]), instead of on the touch-down as the mouse does.
+fn touch_press_id() -> egui::Id {
+    egui::Id::unique("press-menu-touch")
+}
+
+/// Where the current press began, for [`click_started_on`]: set while a press is down and kept
+/// through its release (the frame a click is attributed), cleared once the gesture is over.
+fn press_origin_id() -> egui::Id {
+    egui::Id::unique("press-menu-press-origin")
+}
+
+/// Bookkeeping shared by every press menu, combo box and the menu bar: records where a press
+/// began and clears it once the gesture is over. Call from each entry point, before its work.
+pub(crate) fn maintain(ctx: &egui::Context) {
+    let (pressed, down, click, released) = ctx.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down(), i.pointer.any_click(), i.pointer.any_released()));
+    if pressed {
+        if let Some(origin) = ctx.input(|i| i.pointer.press_origin()) {
+            ctx.data_mut(|d| d.insert_temp(press_origin_id(), origin));
+        }
+    } else if !down && !click && !released {
+        ctx.data_mut(|d| d.remove::<egui::Pos2>(press_origin_id()));
+    }
+}
+
+/// Does the click on `item` this frame press on the item itself? A press in the sliver between a
+/// button and its flush menu is credited to the menu (the top layer wins the distance tie), and
+/// the finger resting there only grazed the button — it must not run the item. Clicks without a
+/// pointer press on record (AccessKit, the keyboard) run as before.
+pub(crate) fn click_started_on(ui: &Ui, item: &Response) -> bool {
+    ui.ctx().data(|d| d.get_temp::<egui::Pos2>(press_origin_id())).is_none_or(|origin| item.interact_rect.contains(origin))
+}
+
+/// Is the press-drag gesture that opened `popup` running (the pointer is still down from the
+/// press that opened it)? Several press menus run in one frame (the Layers footer has two): each
+/// owns only its own gesture.
+pub(crate) fn owns_gesture(ctx: &egui::Context, popup: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<egui::Id>(gesture_id())) == Some(popup)
+}
+
+/// Is any press-drag gesture running?
+pub(crate) fn any_gesture(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<egui::Id>(gesture_id())).is_some()
+}
+
+/// The popup whose press-drag gesture is running, if any.
+pub(crate) fn gesture_owner(ctx: &egui::Context) -> Option<egui::Id> {
     ctx.data(|d| d.get_temp::<egui::Id>(gesture_id()))
 }
 
-/// This frame's open/close command for `button`'s popup: a primary press opens a closed menu
-/// (starting a press-drag gesture) or closes an open one, a secondary click opens it, and the
-/// primary release never toggles, so the menu doesn't blink.
-fn open_command(button: &Response, popup: egui::Id) -> Option<SetOpenCommand> {
+/// The press-drag gesture is over (its release was handled by the items or ended elsewhere).
+pub(crate) fn end_gesture(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<egui::Id>(gesture_id()));
+}
+
+/// A finger is down on `popup`'s button, waiting to lift (see [`open_command`]).
+pub(crate) fn touch_tap_pending(ctx: &egui::Context, popup: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<egui::Id>(touch_press_id())) == Some(popup)
+}
+
+/// This frame's open/close command for `button`'s popup: on the mouse, a primary press opens a
+/// closed menu (starting a press-drag gesture) or closes an open one; a finger taps on the lift
+/// instead; a secondary click opens; and the primary release never toggles, so the menu doesn't
+/// blink.
+pub(crate) fn open_command(button: &Response, popup: egui::Id) -> Option<SetOpenCommand> {
     let ctx = &button.ctx;
     if button.secondary_clicked() {
         return Some(SetOpenCommand::Bool(true));
     }
     // A press this frame on the button (still down, or a whole click within one frame).
     let pressed = ctx.input(|i| i.pointer.primary_pressed()) && (button.is_pointer_button_down_on() || button.clicked());
-    if !pressed {
-        return None;
+    if pressed {
+        // A finger presses: wait for the lift, which toggles (its flag read below). A finger
+        // drifts between touch-down and lift, and the menu opens flush beside the contact, so
+        // opening on the touch-down lets the lift run the item beside the finger. A whole tap
+        // within one frame has nowhere to drift, and a mouse has none at all.
+        if ctx.input(|i| i.any_touches()) && !button.clicked() {
+            ctx.data_mut(|d| d.insert_temp(touch_press_id(), popup));
+            return None;
+        }
+        let open = Popup::is_id_open(ctx, popup);
+        if !open {
+            ctx.data_mut(|d| d.insert_temp(gesture_id(), popup));
+        }
+        return Some(SetOpenCommand::Bool(!open));
     }
-    let open = Popup::is_id_open(ctx, popup);
-    if !open {
-        ctx.data_mut(|d| d.insert_temp(gesture_id(), popup));
+    // The finger lifted where it pressed down: toggle, as the mouse's press does. (A lift that
+    // drifted too far or held too long is no click and toggles nothing.)
+    if button.clicked() && touch_tap_pending(ctx, popup) {
+        ctx.data_mut(|d| d.remove::<egui::Id>(touch_press_id()));
+        let open = Popup::is_id_open(ctx, popup);
+        return Some(SetOpenCommand::Bool(!open));
     }
-    Some(SetOpenCommand::Bool(!open))
+    None
 }
 
 /// One press menu, handed to [`show`]'s content to choose its items with.
@@ -42,14 +116,15 @@ pub struct PressMenu {
 }
 
 impl PressMenu {
-    fn owns_gesture(&self, ctx: &egui::Context) -> bool {
-        gesture_owner(ctx) == Some(self.popup)
-    }
-
-    /// Was `item` chosen this frame: clicked, or the press-drag gesture that opened this menu was
-    /// released on it?
+    /// Was `item` chosen this frame: clicked (on the item itself — see [`click_started_on`]), or
+    /// the press-drag gesture that opened this menu was released on it?
     pub fn chosen(&self, ui: &Ui, item: &Response) -> bool {
-        item.clicked() || (item.enabled() && item.contains_pointer() && ui.input(|i| i.pointer.primary_released()) && self.owns_gesture(ui.ctx()))
+        let hit = (item.clicked() && click_started_on(ui, item))
+            || (item.enabled() && item.contains_pointer() && ui.input(|i| i.pointer.primary_released()) && owns_gesture(ui.ctx(), self.popup));
+        if hit {
+            ui.close();
+        }
+        hit
     }
 
     /// A menu item button; true (and the menu closes) when it is chosen.
@@ -60,7 +135,7 @@ impl PressMenu {
     /// Is the press-drag gesture that opened this menu over `item`, still held? egui doesn't
     /// hover other widgets while one is dragged, so the item would show no highlight (#4601).
     fn dragged_over(&self, ui: &Ui, item: &Response) -> bool {
-        item.enabled() && !item.hovered() && item.contains_pointer() && ui.input(|i| i.pointer.primary_down()) && self.owns_gesture(ui.ctx())
+        item.enabled() && !item.hovered() && item.contains_pointer() && ui.input(|i| i.pointer.primary_down()) && owns_gesture(ui.ctx(), self.popup)
     }
 
     fn item_response(&self, ui: &mut Ui, text: impl Into<egui::WidgetText>) -> (Response, bool) {
@@ -105,17 +180,19 @@ pub fn show<R>(button: &Response, content: impl FnOnce(&mut Ui, &PressMenu) -> R
 pub fn show_with_close_behavior<R>(button: &Response, close_behavior: PopupCloseBehavior, content: impl FnOnce(&mut Ui, &PressMenu) -> R) -> Option<R> {
     let ctx = button.ctx.clone();
     let menu = PressMenu { popup: Popup::default_response_id(button) };
+    maintain(&ctx);
+    let touch_tap = touch_tap_pending(&ctx, menu.popup);
     let open = open_command(button, menu.popup);
     // The release ending the press that opened the menu is a click outside the popup: it must not
-    // close it again.
-    let close = if button.clicked() && menu.owns_gesture(&ctx) { PopupCloseBehavior::IgnoreClicks } else { close_behavior };
+    // close it again. The same for a finger's lift, which opened (or closed) the menu itself.
+    let close = if button.clicked() && (owns_gesture(&ctx, menu.popup) || touch_tap) { PopupCloseBehavior::IgnoreClicks } else { close_behavior };
     let shown = Popup::menu(button).open_memory(open).close_behavior(close).show(|ui| content(ui, &menu)).map(|r| r.inner);
     if shown.is_some() || Popup::is_id_open(&ctx, menu.popup) {
         above_parent(&ctx, button.layer_id, egui::LayerId::new(egui::Order::Foreground, menu.popup));
     }
     // This menu's gesture ends with the button (its release was handled by the items above).
-    if menu.owns_gesture(&ctx) && ctx.input(|i| i.pointer.primary_released() || !i.pointer.primary_down()) {
-        ctx.data_mut(|d| d.remove::<egui::Id>(gesture_id()));
+    if owns_gesture(&ctx, menu.popup) && ctx.input(|i| i.pointer.primary_released() || !i.pointer.primary_down()) {
+        end_gesture(&ctx);
     }
     shown
 }
@@ -137,42 +214,42 @@ impl PressCombo {
         // egui's ids for the box (`ComboBox::show_ui`) and its list (`widget_to_popup_id`).
         let combo = PressCombo { popup: ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup") };
         let ctx = ui.ctx();
+        maintain(ctx);
+        let touch_tap = touch_tap_pending(ctx, combo.popup);
         // The click ending the press that opened the list (the pointer didn't leave the box): egui
         // toggles the list on it, so close it first and the toggle leaves it open, drawn this
-        // frame. No click may close it either.
-        if combo.owns_gesture(ctx) && ctx.input(|i| i.pointer.primary_clicked()) {
+        // frame. A finger's lift that opens the list is such a click too. No click may close it.
+        if (owns_gesture(ctx, combo.popup) || touch_tap) && ctx.input(|i| i.pointer.primary_clicked()) {
             Popup::close_id(ctx, combo.popup);
             return (combo, PopupCloseBehavior::IgnoreClicks);
         }
         (combo, PopupCloseBehavior::CloseOnClick)
     }
 
-    fn owns_gesture(&self, ctx: &egui::Context) -> bool {
-        gesture_owner(ctx) == Some(self.popup)
-    }
-
-    /// Was option `item` (in the open list `ui`) chosen this frame: clicked, or the press-drag
-    /// gesture that opened the list released on it? The list closes when it was.
+    /// Was option `item` (in the open list `ui`) chosen this frame: clicked (on the option
+    /// itself — see [`click_started_on`]), or the press-drag gesture that opened the list
+    /// released on it? The list closes when it was.
     pub fn chosen(&self, ui: &Ui, item: &Response) -> bool {
-        let released_on = item.enabled() && item.contains_pointer() && ui.input(|i| i.pointer.primary_released()) && self.owns_gesture(ui.ctx());
+        let released_on = item.enabled() && item.contains_pointer() && ui.input(|i| i.pointer.primary_released()) && owns_gesture(ui.ctx(), self.popup);
         if released_on {
             ui.close();
         }
-        item.clicked() || released_on
+        (item.clicked() && click_started_on(ui, item)) || released_on
     }
 
-    /// After the combo box (`button`: its response). A primary press on the box opens a closed
-    /// list, starting a press-drag gesture; the gesture ends with the button.
+    /// After the combo box (`button`: its response). On the mouse, a primary press on the box
+    /// opens a closed list, starting a press-drag gesture; the gesture ends with the button. A
+    /// finger taps: egui's combo toggles the list on the lift, so the press only records itself.
     pub fn after(&self, button: &Response) {
         let ctx = &button.ctx;
         let pressed = ctx.input(|i| i.pointer.primary_pressed()) && button.is_pointer_button_down_on();
-        if pressed && !Popup::is_id_open(ctx, self.popup) {
+        if pressed && !(ctx.input(|i| i.any_touches()) && !button.clicked()) && !Popup::is_id_open(ctx, self.popup) {
             // Opened now, the list counts as open this frame and egui shows it from the next.
             Popup::open_id(ctx, self.popup);
             ctx.data_mut(|d| d.insert_temp(gesture_id(), self.popup));
             ctx.request_repaint();
-        } else if self.owns_gesture(ctx) && ctx.input(|i| i.pointer.primary_released() || !i.pointer.primary_down()) {
-            ctx.data_mut(|d| d.remove::<egui::Id>(gesture_id()));
+        } else if owns_gesture(ctx, self.popup) && ctx.input(|i| i.pointer.primary_released() || !i.pointer.primary_down()) {
+            end_gesture(ctx);
         }
         if Popup::is_id_open(ctx, self.popup) {
             above_parent(ctx, button.layer_id, egui::LayerId::new(egui::Order::Foreground, self.popup));
@@ -267,6 +344,97 @@ mod tests {
         fn item_center(&self, i: usize) -> Pos2 {
             self.items[0][i].center()
         }
+
+        /// A finger's touch-down or lift, shaped as egui-winit delivers it: the `Touch` event plus
+        /// the emulated pointer press or release.
+        fn finger_press(&mut self, pos: Pos2, down: bool) -> Frame {
+            let touch = |phase| Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(1), phase, pos, force: None };
+            let button = Event::PointerButton { pos, button: PointerButton::Primary, pressed: down, modifiers: Modifiers::NONE };
+            let events = if down {
+                vec![touch(egui::TouchPhase::Start), Event::PointerMoved(pos), button]
+            } else {
+                vec![touch(egui::TouchPhase::End), button, Event::PointerGone]
+            };
+            self.frame(events)
+        }
+
+        /// The sliver between the button and its flush menu, closest to the first item: egui
+        /// credits a press there to the item (it is the nearer hit, and on ties the top layer
+        /// wins).
+        fn sliver(&self) -> Pos2 {
+            let b = self.buttons[0];
+            let item = self.items[0][0];
+            pos2(b.center().x, b.bottom() + (item.top() - b.bottom()) * 0.75)
+        }
+    }
+
+    /// The reported touch misfire: one tap on the button opened the menu on the touch-down, and
+    /// the tap's own lift — or the second tap grazing the button's edge — ran the item beside the
+    /// finger. A finger now taps on the lift, and a click only runs the item it pressed on.
+    #[test]
+    fn a_finger_tap_opens_on_the_lift_and_chooses_nothing() {
+        let mut rig = Rig::new();
+        let at = rig.buttons[0].center();
+        rig.frame(vec![Event::PointerMoved(at)]);
+        let f = rig.finger_press(at, true);
+        assert!(!f.open, "the touch-down opens nothing");
+        assert_eq!(f.chosen, None);
+        let f = rig.finger_press(at, false);
+        assert!(f.open, "the lift opens the menu");
+        assert_eq!(f.chosen, None, "and chooses nothing");
+        assert!(rig.frame(Vec::new()).open, "the menu stays open");
+        // The second tap, on an item, chooses it.
+        let levels = rig.item_center(0);
+        rig.frame(vec![Event::PointerMoved(levels)]);
+        rig.finger_press(levels, true);
+        let f = rig.finger_press(levels, false);
+        assert_eq!(f.chosen, Some("Levels"), "the tapped item ran");
+        assert!(!rig.frame(Vec::new()).open, "and closed the menu");
+    }
+
+    /// The sliver between the button and its flush menu: the menu is open, a stationary tap lands
+    /// a hair below the button (egui credits it to the item — the nearer hit on the top layer),
+    /// and the lift must not run the item the finger merely grazed.
+    #[test]
+    fn a_tap_in_the_sliver_between_button_and_menu_chooses_nothing() {
+        let mut rig = Rig::new();
+        let at = rig.buttons[0].center();
+        rig.frame(vec![Event::PointerMoved(at)]);
+        rig.press(at, true);
+        rig.press(at, false);
+        assert!(rig.frame(Vec::new()).open, "the menu is open");
+        let in_the_sliver = rig.sliver();
+        rig.frame(vec![Event::PointerMoved(in_the_sliver)]);
+        rig.press(in_the_sliver, true);
+        let f = rig.press(in_the_sliver, false);
+        assert_eq!(f.chosen, None, "the grazed item did not run");
+        assert!(!rig.frame(Vec::new()).open, "the grazed tap only dismissed the menu");
+    }
+
+    /// The mouse's press-drag-release is a finger's accidental drift: a finger that presses the
+    /// button and lifts over an item chose it when the menu opened on the touch-down. The finger
+    /// menu never opens on the touch-down, so the drift chooses nothing (a deliberate finger
+    /// drag opens nothing either: fingers tap, like Photoshop on the iPad).
+    #[test]
+    fn a_finger_press_drag_release_chooses_nothing() {
+        let mut rig = Rig::new();
+        let at = rig.buttons[0].center();
+        // Learn where the items sit: a mouse click opens the menu (and a second closes it).
+        rig.frame(vec![Event::PointerMoved(at)]);
+        rig.press(at, true);
+        rig.press(at, false);
+        let curves = rig.item_center(1);
+        rig.press(at, true);
+        rig.press(at, false);
+        assert!(!rig.frame(Vec::new()).open, "the menu is closed again");
+        // The finger flow: press the button, drift onto where Curves sits, lift there.
+        rig.frame(vec![Event::PointerMoved(at)]);
+        rig.finger_press(at, true);
+        rig.frame(Vec::new());
+        rig.drag_to(at, curves);
+        let f = rig.finger_press(curves, false);
+        assert_eq!(f.chosen, None, "the drift onto Curves chose nothing");
+        assert!(!rig.frame(Vec::new()).open, "the lift off the button opened nothing either");
     }
 
     #[test]

@@ -75,7 +75,7 @@ pub(super) fn render_level_rows(ui: &mut egui::Ui, items: &[&MenuItem], depth: u
                     "image.mode.bits32" => r.on_hover_text(crate::i18n::tr(lang, "Floating point")),
                     _ => r,
                 };
-                let hit = r.clicked() || released_on(ui, &r);
+                let hit = (r.clicked() && crate::press_menu::click_started_on(ui, &r)) || released_on(ui, &r);
                 (r, hit)
             });
             if hit {
