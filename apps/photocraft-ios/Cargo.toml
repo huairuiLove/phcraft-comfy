@@ -62,4 +62,4 @@ cc = "1"
 
 [dev-dependencies]
 # The transport test decodes the local server's inline b64_json reply.
-base64 = "0.22"
+base64 = "0.23"
