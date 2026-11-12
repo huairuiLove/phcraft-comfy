@@ -209,6 +209,7 @@
 	Generate	生成
 	Image Assets	图像资源
 	Place Embedded…	置入嵌入对象…
+	Place from Tray	从暂存盒放置
 	Place Linked…	置入链接对象…
 	Package…	打包…
 	Automate	自动化
@@ -421,6 +422,8 @@
 	Artboard…	画板…
 	Artboard from Group…	从组创建画板…
 	Artboard from Layers…	从图层创建画板…
+	Layer tray	图层暂存盒
+	Layer tray: stash layers, then place them in another document	图层暂存盒：先存入图层，之后放进另一个文档
 	Layer via Copy	通过复制创建图层
 	Layer via Cut	通过剪切创建图层
 	Layer From Background…	从背景创建图层…
@@ -463,8 +466,13 @@
 	Convert for Smart Filters	转换为智能滤镜
 	Clear Smart Filters	清除智能滤镜
 	Disable Smart Filters	禁用智能滤镜
+	Enable Smart Filters	启用智能滤镜
 	Delete Filter Mask	删除滤镜蒙版
 	Disable Filter Mask	禁用滤镜蒙版
+	Enable Filter Mask	启用滤镜蒙版
+	Delete Smart Filter	删除智能滤镜
+	Disable Smart Filter	禁用智能滤镜
+	Enable Smart Filter	启用智能滤镜
 	Solid Color…	纯色…
 	Gradient…	渐变…
 	Pattern…	图案…
@@ -973,6 +981,7 @@
 	Delete effect	删除效果
 	Add a mask  (from the selection; ⌥ inverts)	添加蒙版  （基于选区；⌥ 反相）
 	Add an adjustment	添加调整
+	Add to Tray	加入暂存盒
 	Add disk	添加磁盘
 	Add space after paragraph	添加段后间距
 	Add space before paragraph	添加段前间距
@@ -1090,6 +1099,7 @@
 	Clarity	清晰度
 	Clear All	全部清除
 	Clear Override	清除覆盖设置
+	Clear Tray	清空暂存盒
 	Clear Samples	清除取样
 	Click sets foreground · right-click sets background	单击设置前景色 · 右键单击设置背景色
 	Click the first point or press ↵ to close · Esc cancels	单击起点或按 ↵ 闭合 · Esc 取消
@@ -1240,6 +1250,7 @@
 	Done	完成
 	Dots	点
 	Drag a rectangle around the object	围绕对象拖出矩形
+	Drag layers here, or long-press a layer and choose “Add to Tray”	将图层拖到这里，或长按图层并选择“加入暂存盒”
 	Drag on the image to add a constraint; Shift for horizontal/vertical; right-click a constraint to change or delete it.	在图像上拖动以添加约束；按 Shift 保持水平或垂直；右键单击约束可更改或删除。
 	Click: select anchor · Drag: move anchor, handle or segment · {shift}-click: add · {alt}-click: whole subpath	单击：选择锚点 · 拖动：移动锚点、手柄或线段 · {shift}-单击：添加 · {alt}-单击：整个子路径
 	Draw with the Pen tool (P) or make a work path from a selection.	使用钢笔工具（P）绘制，或从选区创建工作路径。
@@ -1567,6 +1578,7 @@
 	Relative Colorimetric	相对比色
 	Remove	移除
 	Remove All Pins	移除所有控制点
+	Remove from Tray	从暂存盒移除
 	Remove Background	移除背景
 	Remove Planes	移除平面
 	Remove Tool	移除工具

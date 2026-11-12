@@ -25,13 +25,17 @@ pub fn open(multiple: bool, reply: FileDialogReply) {
     real::open(multiple, reply);
 }
 
-/// Present the export sheet for a file the `write` service already staged (see `main.rs`).
+/// Present the export sheet that copies an already-written file wherever the user picks
+/// (`asCopy`). The save flow now writes the app's own Documents folder directly, so nothing
+/// calls this yet; it stays wired for an explicit "export a copy" affordance on top.
 #[cfg(target_os = "ios")]
+#[allow(dead_code)]
 pub fn export(path: &std::path::Path) {
     real::export(path);
 }
 
 #[cfg(not(target_os = "ios"))]
+#[allow(unused_imports)]
 pub use stubs::{export, install, open};
 
 #[cfg(target_os = "ios")]
@@ -69,7 +73,8 @@ mod real {
         pc_pick_open(c_int::from(multiple));
     }
 
-    /// Present the export sheet for a file the `write` service already staged (see `main.rs`).
+    /// Present the export sheet for a file the shell already wrote (see the module docs).
+    #[allow(dead_code)]
     pub fn export(path: &std::path::Path) {
         let Ok(path) = CString::new(path.to_string_lossy().as_bytes()) else {
             return;
@@ -129,5 +134,6 @@ mod stubs {
     /// No picker off-device: the reply drops unanswered, which the app reads as Cancel.
     pub fn open(_multiple: bool, _reply: FileDialogReply) {}
 
+    #[allow(dead_code)]
     pub fn export(_path: &std::path::Path) {}
 }

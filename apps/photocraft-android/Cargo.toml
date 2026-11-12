@@ -36,8 +36,13 @@ photocraft-raster = { workspace = true }
 photocraft-text = { workspace = true }
 photocraft-ui-egui = { workspace = true }
 serde_json = { workspace = true }
+# The browser's Projects tab shows each document's save date (no hand-rolled calendars).
+chrono = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
+# The Image API transport (src/api_gen.rs): like the desktop app's ComfyUI client, but with TLS —
+# the endpoints are remote and https. MIT/Apache-2.0, inside the licence allowlist.
+ureq = { version = "3.5", default-features = false, features = ["json", "multipart", "rustls"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 eframe = { workspace = true, features = ["wgpu", "android-native-activity"] }
@@ -52,7 +57,9 @@ sys-locale = "=0.3.2"
 # Pinned to the tree's single locked version so there is exactly one JNI glue crate.
 jni = "0.22"
 
-# The browser's click flow, replayed off-device like ui-egui's ios_tap_flow_tests.
+# The browser's click flow, replayed off-device like ui-egui's ios_tap_flow_tests; the Image API
+# transport test decodes the local server's inline b64_json reply.
 [target.'cfg(not(target_os = "android"))'.dev-dependencies]
 eframe = { workspace = true, features = ["wgpu"] }
 egui_kittest = { workspace = true, features = ["eframe"] }
+base64 = "0.22"

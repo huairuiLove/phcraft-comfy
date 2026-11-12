@@ -158,3 +158,5 @@ are adapted from Skyfuller1303’s MIT OR Apache-2.0 implementation in
 `897f20072762fdf0eb688adcdb8d8cda7b38ce66`. Don Omondi’s embedded AI/PDF/EPS
 extension and current-main integration build on that source. Clipboard and unrelated
 Shape Tools changes from that branch are not included.
+| `assets/app-icon/photocomfy-concept-v1.png` | AI-generated mobile icon concept for PhotoComfy | PhotoCraft contributors using Comfy Desktop's configured GPT image endpoint | Generated in-house on 2026-11-11 | Original work |
+| `assets/app-icon/photocomfy-mobile.svg` and mobile icon exports | Vector derivative and platform exports of the PhotoComfy mobile icon concept | PhotoCraft contributors | Original SVG geometry derived from the in-house generated concept | MIT OR Apache-2.0 |

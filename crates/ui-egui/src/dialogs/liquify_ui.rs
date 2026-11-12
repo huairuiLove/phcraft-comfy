@@ -779,6 +779,11 @@ fn resized_brush(start_size: f32, start_density: f32, dx: f32, dy: f32, zoom: f3
 /// pointer-down subtracts from the freeze mask (lasso), reverses a twirl and swaps Pucker/Bloat;
 /// Shift adds to the mask, same as no modifier.
 pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) {
+    // Pen-only painting (the iPad): every Liquify tool paints — the warp brushes, Freeze and
+    // Thaw, the freeze lasso — so the whole workspace takes only the pen there.
+    if matches!(ev, ToolEvent::Down { .. }) && crate::input::finger::refuses_finger(app, true) {
+        return;
+    }
     let now = crate::gpu_canvas::now_ms();
     let Some(d) = app.distort.liquify.as_mut() else { return };
     match ev {

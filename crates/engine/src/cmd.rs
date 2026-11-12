@@ -106,6 +106,7 @@ pub mod layer_multi_cmds;
 pub mod layer_nav_cmds;
 mod layer_params;
 mod layer_references;
+pub mod layer_tray_cmds;
 pub mod layer_xmp_cmds;
 pub mod lens_cmds;
 pub mod magnetic_cmds;
@@ -1352,6 +1353,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::smart_cmds::specs());
     v.extend(crate::layer_multi_cmds::specs());
     v.extend(crate::layer_copy_cmds::specs());
+    v.extend(crate::layer_tray_cmds::specs());
     v.extend(crate::prefs::specs());
     v.extend(comfy_cmds::specs());
     v.extend(comfy_workflow_cmds::specs());

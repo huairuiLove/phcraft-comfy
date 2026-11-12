@@ -20,29 +20,56 @@ degrades gracefully, as in the browser and on iPadOS.
 ## Opening and saving files
 
 The system SAF pickers can't answer a NativeActivity (`onActivityResult` is not forwarded to
-native code anywhere in the stack), so File ▸ Open / Save As open an **in-app browser**
-(`src/browser.rs`, an egui panel over the app), which walks the file system directly:
+native code anywhere in the stack), so File ▸ Open / Save As open an **in-app picker**
+(`src/browser.rs`, an egui panel over the app) with three tabs:
 
-- With *all files access* granted (`MANAGE_EXTERNAL_STORAGE`, the manifest asks for it) the
-  browser roots at the whole shared storage — works through Android 15; grant it once in
-  Settings ▸ Apps ▸ PhotoComfy ▸ All files access (the browser's banner links there on older
-  systems).
-- **Android 16 removed the grant for ordinary apps** (the settings page lists nothing, and
-  `appops` grants are not honored), so there the browser roots at the app's own folder on
-  shared storage — `/storage/emulated/0/Android/data/com.photocomfy.app/files` — which every
-  Android version lets the app and **adb over USB** read and write with no permission. Copy
-  files in over USB, open and save them there, and fetch saves from the same folder.
+- **Gallery** — the device's photos, queried straight from MediaStore over JNI
+  (`src/platform.rs`), newest first, with streaming thumbnails and camera RAW files included
+  (MediaStore's `image/*` MIMEs cover ARW/CR2/CR3/DNG/NEF and friends). The first use shows
+  an *Allow photo access* button (`Activity.requestPermissions` over JNI); the grant lands
+  without a callback — NativeActivity gets none — so the button says to tap *Refresh* after
+  choosing. A pick reads the file through `ContentResolver.openInputStream` on a worker
+  thread and answers with its contents, the same shape as the iPad picker's answer.
+- **Projects** — the app's own library at `Android/data/com.photocomfy.app/files/Projects`,
+  listed recursively (`.pcraft`, `.psd`, `.psb`), newest first, one tap to reopen. **Save As
+  starts here**: every save accumulates in the app, so no project is ever lost, and the
+  folder is reachable over USB (`adb push/pull`, or any MTP file browser) for bulk moves.
+- **Files** — a plain folder browser over std::fs, rooted as far as the system allows:
+  - With *all files access* granted (`MANAGE_EXTERNAL_STORAGE`, the manifest asks for it) the
+    tab roots at the whole shared storage — works through Android 15; grant it once in
+    Settings ▸ Apps ▸ PhotoComfy ▸ All files access (the browser's banner links there on
+    older systems).
+  - The APK targets 29 with `requestLegacyExternalStorage="true"`, so the **ordinary
+    READ/WRITE_EXTERNAL_STORAGE pair — the Gallery tab's same Allow button — carries the
+    legacy full-tree view on later versions too** (verified on the API 36 emulator:
+    `storage granted: true` in `files/launch.log` after `pm grant`): raw-path reads and
+    writes of the whole shared storage, RAW and `.psd` included, on Android 16 where
+    MANAGE_EXTERNAL_STORAGE is gone.
+  - With nothing granted the tab roots at the app's own folder on shared storage, which
+    every Android version lets the app and **adb over USB** read and write with no
+    permission.
 
-Answers carry real paths, so replace prompts, in-place saves and the recent-files list work
-as on the desktop. Known gap on the emulator (API 36 image): the browser's rows render but a
-tap on them is not registered by the egui fork's Android input path (the Cancel/Refresh
-buttons work; the same flow passes in the off-device `tests/browser_flow.rs` kittest suite).
-Real-device behaviour is the open question — if rows also ignore taps there, the next stop is
-the egui fork's touch-to-click conversion, not this shell.
+Answers carry real paths where the file system has them (replace prompts, in-place saves and
+the recent-files list work as on the desktop) and contents where the source is a MediaStore
+stream. Known gap on the emulator (API 36 image): the listing rows render but a tap on them
+is not registered by the egui fork's Android input path (the Cancel/Refresh buttons work; the
+same flows pass in the off-device `tests/browser_flow.rs` and `tests/gallery_flow.rs` kittest
+suites). Real-device behaviour is the open question — if rows also ignore taps there, the
+next stop is the egui fork's touch-to-click conversion, not this shell.
 
 AccessKit (screen-reader support) is compiled out on Android: eframe only offers it with the
 `android-game-activity` backend, which would pull the Games SDK's Java glue into the APK.
 `ui-egui`'s eframe dependency enables the `accesskit` feature everywhere else.
+
+## AI image generation
+
+The Generate panel (the drawer's sparkles button) is the same shared ComfyUI workspace as the
+desktop — the prompt templates (生图 · 扩图, 大气透视), the send modes (composite / active layer /
+selection crop), the result placement and the shelf — with one difference: there is no local
+ComfyUI server to talk to, so generation goes straight to an OpenAI-compatible Image API
+(`src/api_gen.rs`, the iPad app's backend). Set the endpoint, model and key once in Preferences ▸
+Integrations (or right in the panel; the Check button asks the endpoint for its model list);
+results persist in the app's private `files/Generations`, so the shelf survives a relaunch.
 
 ## Build
 
@@ -77,7 +104,10 @@ apps" for that source once. **Nothing expires** — Android has no Apple-style p
 profile, so one install keeps working; sign updates with the same keystore
 (`android/debug.keystore`, already gitignored) or every update forces an uninstall first.
 `versionCode` is still 1 for every build; raise it in `android/build.sh` when you want Android
-to treat a rebuild as an update over an existing install.
+to treat a rebuild as an update over an existing install. Note that the keystore is generated
+per checkout: an APK built on another machine signs differently, so installing it over an
+existing install fails ("app not installed") until the old one is uninstalled. Chat apps also
+mangle APK transfers (renamed `.apk.1`, stripped); copy over USB, a drive app, or a cable.
 
 ## Diagnostics
 
@@ -115,6 +145,18 @@ on the emulator image, it falls back to GLES; on real devices Vulkan is the norm
 
 ## Troubleshooting
 
+- **"Install" is greyed out or a risk dialog blocks it (Xiaomi/HyperOS, MIUI, and other
+  Chinese ROMs)**: these ROMs intercept sideloaded APKs on top of stock Android.
+  - HyperOS/MIUI's **pure mode** (纯净模式, on by default) blocks non-store apps with a
+    security prompt and a greyed button — search 设置 for "纯净模式" and turn it off (some
+    builds ask you to sign in to a Xiaomi account first).
+  - The app you open the APK *from* needs **install unknown apps** permission once:
+    设置 › 隐私保护 › 特殊权限 › 安装未知应用 › that file manager / browser.
+  - MIUI's developer-options **"install via USB"** toggle can require a signed-in Xiaomi
+    account and a SIM; plain `adb install` from a booted `adb` session is the least-gated
+    path on a desk.
+  - "应用未安装" (app not installed) on *update* means a signature change (per-checkout
+    keystore; see Install and share) — uninstall the old app first.
 - **Fails to install with `INSTALL_FAILED_NO_MATCHING_ABIS`**: the device is not arm64-v8a
   (an x86_64 emulator on an Intel PC, or a very old 32-bit device). Build that ABI too:
   `cargo ndk -t x86_64 ...` and drop the .so into `lib/x86_64/` before the zip step.

@@ -122,6 +122,13 @@ pub fn filter_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, doc: &Document, l
     let active = st.active_layer == Some(l.id);
     let picked = ui.ctx().data(|d| d.get_temp::<FilterDrag>(selected_key(doc.id)));
     let rows = std::iter::once(None).chain((0..sm.smart_filters.len()).rev().map(Some));
+    // The press menu every other Layers-panel row has: a right-click opens it, and the touch
+    // shells turn a still half-second hold into that same click (`crate::long_press`), which is
+    // how a finger deletes a filter — there is no footer Delete drop without a precise drag.
+    fn press_menu(app: &mut PhotocraftApp, ui: &mut egui::Ui, l: &Layer, sm: &SmartObject, index: Option<usize>, doc: photocraft_doc::DocId, actions: &mut Vec<(String, Value)>) {
+        crate::widgets::style_spectrum_popup_menu(ui);
+        crate::layer_menu_ui::show_smart_filter(app, ui, l, sm, index, doc, actions);
+    }
     for index in rows {
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), if index.is_none() { header_height } else { SUB_ROW_H }), Sense::click_and_drag());
         if let Some((to, action)) = reorder_drop(ui, l, sm.smart_filters.len(), index, rect) {
@@ -229,6 +236,12 @@ pub fn filter_rows(app: &mut PhotocraftApp, ui: &mut egui::Ui, doc: &Document, l
                 crate::notices::error(app, e);
             }
             blend_resp.on_hover_text(label);
+        }
+        // The row and its name (the name's rect sits over the row and takes its presses) both
+        // carry the press menu, like the layer row and the effect rows above it.
+        resp.context_menu(|ui| press_menu(app, ui, l, sm, index, doc.id, actions));
+        if let Some(r) = name_resp.as_ref() {
+            r.context_menu(|ui| press_menu(app, ui, l, sm, index, doc.id, actions));
         }
     }
     // Every row of `l` is drawn, so a filter of it selected (now, after this pass's clicks) is on

@@ -2,7 +2,7 @@
 //! unavailable ones are greyed using the same enablement as the main menus. Items marked as menu
 //! invocations (`Value::Null` params) go through `menus::invoke`, so dialogs open like in the menu bar.
 
-use photocraft_doc::{LabelColor, Layer, LayerContent};
+use photocraft_doc::{DocId, LabelColor, Layer, LayerContent, SmartObject};
 use serde_json::{Value, json};
 
 /// One entry: label, command id. `None` = separator.
@@ -54,6 +54,9 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
     let mut v: Vec<Entry> = vec![Some((tl!("Blending Options…"), "layer.layerStyle.blendingOptions"))];
     v.push(None);
     v.push(Some((if multi { tl!("Duplicate Layers…") } else { tl!("Duplicate Layer…") }, "layer.duplicate")));
+    // Not a Photoshop command: the tray is how a touch screen (one document visible at a time)
+    // moves layers between documents. Acts on the whole selection, like Duplicate.
+    v.push(Some((tl!("Add to Tray"), "layer.tray.put")));
     v.push(Some((if multi { tl!("Delete Layers") } else { tl!("Delete Layer") }, "layer.delete")));
     // Groups the clicked layer, or the whole selection when several layers are selected, after
     // Photoshop's New Group dialog.
@@ -209,6 +212,85 @@ pub fn show_effects(app: &crate::PhotocraftApp, ui: &mut egui::Ui, l: &Layer, ac
     crate::widgets::menu_scroll(ui, |ui| {
         ui.set_min_width(200.0);
         items(app, ui, l, false, effects_entries(), actions);
+    });
+}
+
+/// The Smart Filter row's own menu label: one filter toggles itself, the shared row all of them.
+fn smart_filter_toggle_label(on: bool, all: bool) -> &'static str {
+    match (all, on) {
+        (true, true) => "Disable Smart Filters",
+        (true, false) => "Enable Smart Filters",
+        (false, true) => "Disable Smart Filter",
+        (false, false) => "Enable Smart Filter",
+    }
+}
+
+/// The menu of `l`'s Smart Filters rows: `index` `None` is the Smart Filters row (all of them,
+/// with the filter-mask items), `Some(i)` that one filter. Layer ▸ Smart Filter's commands
+/// scoped to the pressed row, plus Delete Smart Filter (`layer.smartFilter.delete` has no
+/// menu-bar twin), so the touch screen's long-press — the shell's stand-in for the right-click,
+/// as on a layer row or an effect row — can delete a filter too. The actions select `l` first
+/// when it isn't the active layer, as in [`show`]; a deleting item also forgets the selected
+/// filter row, whose index would name the next one after the removal ([`smart_ui::keys`]).
+pub fn show_smart_filter(
+    app: &crate::PhotocraftApp,
+    ui: &mut egui::Ui,
+    l: &Layer,
+    sm: &SmartObject,
+    index: Option<usize>,
+    doc: DocId,
+    actions: &mut Vec<(String, Value)>,
+) {
+    if index.is_some_and(|i| sm.smart_filters.get(i).is_none()) {
+        return;
+    }
+    let layer = l.id.0;
+    crate::widgets::menu_scroll(ui, |ui| {
+        ui.set_min_width(200.0);
+        // Enablement is exact for the active layer; another row is selected first when clicked,
+        // so its items stay available (as in `items`).
+        let is_active = app.session.active().is_some_and(|s| s.active_layer == Some(l.id));
+        let enabled = |id: &str| if is_active { crate::menus::is_enabled(app, id) } else { true };
+        let select_first = |actions: &mut Vec<(String, Value)>| {
+            if !is_active {
+                actions.push(("layer.select".into(), json!({"layer": layer})));
+            }
+        };
+        let mut item = |ui: &mut egui::Ui, label: &str, id: &str, params: Value| {
+            if ui.add_enabled(enabled(id), egui::Button::new(tl!(label))).clicked() {
+                select_first(actions);
+                actions.push((id.into(), params));
+                ui.close();
+            }
+        };
+        match index {
+            Some(i) => {
+                item(ui, "Blending Options…", "layer.smartFilter.blendingOptions", json!({"layer": layer, "index": i}));
+                ui.separator();
+                let on = sm.smart_filters[i].visible;
+                item(ui, smart_filter_toggle_label(on, false), "layer.smartFilter.setVisible", json!({"layer": layer, "index": i}));
+                if ui.add_enabled(enabled("layer.smartFilter.delete"), egui::Button::new(tl!("Delete Smart Filter"))).clicked() {
+                    crate::smart_ui::deselect(ui.ctx(), doc);
+                    select_first(actions);
+                    actions.push(("layer.smartFilter.delete".into(), json!({"layer": layer, "index": i})));
+                    ui.close();
+                }
+            }
+            None => {
+                item(ui, smart_filter_toggle_label(sm.filters_enabled, true), "layer.smartFilter.disableSmartFilters", json!({"layer": layer}));
+                if let Some(mask) = &sm.filter_mask {
+                    item(ui, "Delete Filter Mask", "layer.smartFilter.deleteFilterMask", json!({"layer": layer}));
+                    item(ui, if mask.enabled { "Disable Filter Mask" } else { "Enable Filter Mask" }, "layer.smartFilter.disableFilterMask", json!({"layer": layer}));
+                }
+                ui.separator();
+                if ui.add_enabled(enabled("layer.smartFilter.clearSmartFilters"), egui::Button::new(tl!("Clear Smart Filters"))).clicked() {
+                    crate::smart_ui::deselect(ui.ctx(), doc);
+                    select_first(actions);
+                    actions.push(("layer.smartFilter.clearSmartFilters".into(), json!({"layer": layer})));
+                    ui.close();
+                }
+            }
+        }
     });
 }
 

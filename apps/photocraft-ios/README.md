@@ -81,12 +81,21 @@ press Run again to re-sign. See `docs/development.md` for the full walkthrough.
 File ▸ Open presents the system document picker (`ios/PCDocumentPicker.m`, driven from safe
 Rust through the C ABI in `src/picker.rs`; the picker reads the files — security scope and
 all — inside its delegate and hands `(name, bytes)` to the shell, which answers the app's
-pending dialog with the contents). Save answers at once with the suggested name (the web
-download's shape) and `write` stages the bytes in tmp and presents the export sheet that
-copies them wherever the user picks — so `write_unconfirmed` stays true: cancelling the
-sheet saved nothing, and the document honestly stays marked unsaved (#4962 semantics).
-Folder pickers are not offered (as on the web). `src/picker.rs` holds this crate's only
-unsafe: the pointer reads that copy the callback's bytes across the ABI.
+pending dialog with the contents).
+
+Save and Save As write **the app's own Documents folder** (`<container>/Documents`, created on
+demand) and the document remembers that real path: Open Recent re-opens it, File ▸ Save writes
+back to it, thumbnails read it, and a same-named save asks before replacing (`file_stamp` /
+`same_file` services, as on the desktop). `UIFileSharingEnabled` +
+`LSSupportsOpeningDocumentsInPlace` in Info.plist expose the same folder in Files › On My
+iPad › PhotoCraft, so files move in and out with drag-and-drop or the Files app. (The earlier
+design answered the save dialog with a bare staged name and presented the system export sheet
+— the app never learned where the copy landed, so every Open Recent entry pointed at tmp and
+nothing re-opened.) Old bare-name recents are migrated to the Documents folder once, at
+preferences load. The export-sheet bridge (`picker::export` / `pc_pick_export`) stays wired
+for an explicit copy-out affordance later. Folder pickers are not offered (as on the web).
+`src/picker.rs` holds this crate's only unsafe: the pointer reads that copy the callback's
+bytes across the ABI.
 
 Apple Pencil pressure/tilt arrives through winit's iOS touch events and the stylus feed, like
 a pen on the desktop.

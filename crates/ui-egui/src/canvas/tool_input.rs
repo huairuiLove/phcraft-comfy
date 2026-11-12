@@ -342,6 +342,14 @@ fn handle_eyedropper_event(app: &mut PhotocraftApp, tool: Tool, ev: ToolEvent, m
 
 /// Tool state machine. Shared by mouse input and automation.
 pub fn tool_event(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) {
+    // Pen-only painting (the iPad): a brush-family tool takes only the pen, so a finger's press
+    // stops here — before any drag, live stroke or click dab below starts — while the finger
+    // keeps every other use of the canvas (panning, selections, menus, picking).
+    if matches!(ev, ToolEvent::Down { .. })
+        && crate::input::finger::refuses_finger(app, event_tool(app, mods).is_brushlike())
+    {
+        return;
+    }
     if consumes_cancelled_vector_event(app, ev) {
         return;
     }

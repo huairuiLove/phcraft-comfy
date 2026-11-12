@@ -46,6 +46,7 @@ mod layer_row;
 pub mod layer_row_ui;
 pub(super) mod layer_transfer;
 pub mod layer_tree_ui;
+mod layer_tray;
 mod layers;
 mod layers_empty_menu;
 pub mod layers_panel_ui;

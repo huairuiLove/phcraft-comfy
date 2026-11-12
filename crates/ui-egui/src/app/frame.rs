@@ -38,6 +38,9 @@ impl PhotocraftApp {
         // Caps Lock state read from the OS once per frame (see `Services::caps_lock`): the canvas
         // cursor block needs it before the frame renders. `None` (Wayland/web) keeps `false`.
         self.caps_lock = self.services.caps_lock.as_mut().is_some_and(|f| f());
+        // Finger or pen, before the canvas asks (`input::finger`): where the shell runs
+        // pen-only painting, a finger's press may not paint.
+        self.finger.observe(&ctx.input(|i| i.events.clone()));
         tool_cursor::set_wayland(ctx, self.services.is_wayland);
         if !self.styled {
             Self::setup_context(ctx, self.ui.theme);

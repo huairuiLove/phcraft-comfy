@@ -2,8 +2,11 @@
 //! button). iPadOS and Android themselves map long-press to context menus for their controls;
 //! for the egui UI the touch shells synthesize one: when a finger holds still for half a
 //! second, a Secondary press+release pair is injected at the touch position and every existing
-//! right-click menu in the app opens unchanged. The finger's own events are swallowed from then
-//! until it lifts, so its release cannot click through the menu that just opened.
+//! right-click menu in the app opens unchanged. The finger's own pointer events are swallowed
+//! from then until it lifts, so its release cannot click through the menu that just opened;
+//! its lift itself is passed on as a Touch Cancel, which ends the touch in egui's eyes without
+//! clicking anything — a touch whose end never arrives stays "down" there forever, and every
+//! later one-finger gesture then counts as multi-touch, zooming the canvas instead of painting.
 
 use std::time::Duration;
 
@@ -37,7 +40,7 @@ impl LongPress {
         // events egui synthesized from it in the same batch, and clearing early would let them
         // through.
         let mut lifted: Option<TouchId> = None;
-        events.retain(|event| {
+        events.retain_mut(|event| {
             match event {
                 Event::Touch { id, phase, pos, .. } => match phase {
                     TouchPhase::Start => {
@@ -68,7 +71,17 @@ impl LongPress {
                         if matches!(self.held, Some((hid, _, _)) if hid == *id) {
                             self.held = None; // lifted too soon
                         }
-                        self.swallow != Some(*id)
+                        if self.swallow == Some(*id) {
+                            // The lift itself must still end the touch in egui's eyes: a touch
+                            // whose End never arrives stays "down" there forever, and every
+                            // later one-finger gesture counts as multi-touch — zooming the
+                            // canvas instead of painting. Pass it as a Cancel, which cannot
+                            // click through the menu the way its emulated pointer release would
+                            // (the pointer events below stay swallowed).
+                            *phase = TouchPhase::Cancel;
+                            return true;
+                        }
+                        true
                     }
                 },
                 // The pointer events egui synthesized from the swallowed finger (moves, and the
@@ -198,10 +211,12 @@ mod tests {
         lp.frame(&mut events, Some(1.6)); // fires
         assert_eq!(secondary_fired(&events), 1);
 
-        // The finger moves over the menu and lifts: none of it may click through.
+        // The finger moves over the menu and lifts: none of it may click through. The lift
+        // itself is kept, rewritten to a Cancel — egui must see the touch end, or it stays
+        // "down" there forever and every later one-finger gesture counts as multi-touch.
         let mut events = vec![touch(7, TouchPhase::Move, at + egui::vec2(3.0, 0.0)), Event::PointerMoved(at + egui::vec2(3.0, 0.0)), touch(7, TouchPhase::End, at), primary(at, false), Event::PointerGone];
         lp.frame(&mut events, Some(1.8));
-        assert!(events.is_empty(), "no click-through from the release");
+        assert_eq!(events, vec![touch(7, TouchPhase::Cancel, at)], "only the ending Cancel passes, no click-through");
 
         // A fresh touch afterwards is untouched.
         let mut events = vec![touch(8, TouchPhase::Start, at), primary(at, true)];

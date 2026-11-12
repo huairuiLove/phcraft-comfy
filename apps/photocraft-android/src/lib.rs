@@ -14,6 +14,16 @@
 // only its Android glue (the external-dir fallback and the settings jump) is gated below.
 pub mod browser;
 
+// The system gallery behind the browser's Gallery tab: MediaStore over JNI on the device,
+// with the [`gallery::GallerySource`] seam host tests inject their fake through.
+pub mod gallery;
+
+// The Image API generation transport, the iPad app's `api_gen.rs` twin: it links everywhere
+// (its tests run on the host) and `mod shell` injects it as `Services::comfy_transport`. Public
+// like `browser` — on the host `mod shell` is compiled out and the transport would read as dead
+// code otherwise.
+pub mod api_gen;
+
 #[cfg(target_os = "android")]
 mod platform;
 
@@ -50,6 +60,8 @@ mod shell {
         let _ = FILES_DIR.set(app.internal_data_path());
         // The handle for the window flag and the settings jump (see `platform`).
         crate::platform::set_app(app.clone());
+        breadcrumb(&format!("external data path: {:?}", crate::platform::external_files_dir()));
+        breadcrumb(&format!("storage granted: {}", crate::browser::storage_granted()));
         // KEEP_SCREEN_ON via set_window_flags wedged input on the API 36 emulator (everything
         // rendered, nothing reached the widgets); revisit with a later android-activity.
         // crate::platform::keep_screen_on();
@@ -292,6 +304,15 @@ mod shell {
             })),
             load_prefs: Some(Box::new(read_prefs)),
             save_prefs: Some(Box::new(write_prefs)),
+            // Generation goes straight to the user's OpenAI-compatible Image API
+            // (src/api_gen.rs, the iPad app's backend), not through a ComfyUI server: the
+            // endpoint, model and key are Preferences ▸ Integrations (editable in the
+            // generation panel), and results persist in the app's private files like the
+            // desktop's Generations folder, so the shelf survives a relaunch. The prompt
+            // templates and modes are the shared panel, identical to the desktop.
+            comfy_transport: Some(crate::api_gen::transport()),
+            comfy_image_api: true,
+            comfy_generations_dir: files_dir().map(|dir| dir.join("Generations")),
             ..Default::default()
         }
     }

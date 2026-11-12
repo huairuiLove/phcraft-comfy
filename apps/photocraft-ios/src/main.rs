@@ -14,7 +14,7 @@ use photocraft_ui_egui::theme::ThemeKind;
 thread_local! {
     static LAST_TAP: std::cell::RefCell<Option<egui::Pos2>> = const { std::cell::RefCell::new(None) };
 }
-use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services};
+use photocraft_ui_egui::{FileDialogAnswer, FileStamp, FileDialogRequest, PhotocraftApp, Services};
 #[cfg(target_os = "ios")]
 use objc2_ui_kit::UICoordinateSpace;
 
@@ -161,12 +161,26 @@ impl IosShell {
         }
         PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::Pro);
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services());
+        // The iPad is a pen-first canvas: the brush-family tools and every Liquify brush take
+        // only the Apple Pencil (`input::finger`); a finger points, pans, picks and taps menus.
+        app.pen_only_painting = true;
         // Testing aid (a launcher sets no CLI args for an iPad app): open a document at start,
         // to reproduce the canvas states a reviewer sees.
         if std::env::var_os("PHOTOCRAFT_OPEN_NEW").is_some()
             && let Err(e) = app.run("file.new", serde_json::json!({"width": 1024, "height": 768, "background": "white"}))
         {
             log::warn!("file.new: {e}");
+        }
+        // Testing aid: Save As at start (the save flow with the shell's own services, the
+        // reviewer's first save), replayed like the menu item.
+        if std::env::var_os("PHOTOCRAFT_SAVE_NEW").is_some() {
+            if let Err(e) = app.run("file.new", serde_json::json!({"width": 64, "height": 48, "background": "white"})) {
+                log::warn!("file.new: {e}");
+            }
+            match photocraft_ui_egui::menus::invoke(&mut app, &cc.egui_ctx, "file.saveAs", serde_json::json!({})) {
+                Ok(_) => log::info!("file.saveAs: asked"),
+                Err(e) => log::warn!("file.saveAs: {e}"),
+            }
         }
         // Testing aid: the portrait panel drawer starts open on Layers, for visual checks.
         if std::env::var_os("PHOTOCRAFT_OPEN_DRAWER").is_some() {
@@ -359,10 +373,13 @@ fn services() -> Services {
             photocraft_io::export(doc, path, &settings.io_options()).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())
         })),
         // The system document picker (ios/PCDocumentPicker.m + src/picker.rs). Open reads the
-        // picked files in the delegate (security scope) and answers with contents; Save
-        // answers the name at once and `write` stages the bytes then presents the export
-        // sheet that copies them wherever the user picks — the web download's shape, so
-        // `write_unconfirmed` keeps an honest unsaved mark (a cancelled sheet saved nothing).
+        // picked files in the delegate (security scope) and answers with contents. Save answers
+        // at once with a real path in the app's Documents folder — the container's Documents is
+        // visible in Files › On My iPad › PhotoCraft (UIFileSharingEnabled), so a save lands
+        // where the app can always re-read it (Open Recent, Save in place, thumbnails) and
+        // where the user can move it onward from the Files app. The earlier design answered a
+        // bare staged name and presented the system export sheet: the document then remembered
+        // a path that existed only in tmp, and every Open Recent entry was unopenable.
         file_dialog: Some(Box::new(|request, _parent, reply| match request {
             FileDialogRequest::Open { multiple, .. } => picker::open(multiple, reply),
             // Folder pickers have no counterpart (as on the web): back out.
@@ -371,21 +388,40 @@ fn services() -> Services {
                 let name = Path::new(&suggested)
                     .file_name()
                     .map_or_else(|| suggested.clone(), |n| n.to_string_lossy().into_owned());
-                reply.send(Some(FileDialogAnswer::SaveTo(name)));
+                let path = documents_dir().map(|dir| dir.join(&name)).map_or_else(|| name.clone(), |p| p.to_string_lossy().into_owned());
+                reply.send(Some(FileDialogAnswer::SaveTo(path)));
             }
         })),
         write: Some(Box::new(|path: &str, bytes: &[u8]| {
-            let name = Path::new(path)
-                .file_name()
-                .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned());
-            let staged = std::env::temp_dir().join(format!("photocomfy-export-{name}"));
-            std::fs::write(&staged, bytes).map_err(|e| e.to_string())?;
-            // The write runs inline with the frame on the main thread, and the picker
-            // presents there; the delegate copies the staged file to the destination.
-            picker::export(&staged);
-            Ok(())
+            // Write beside the file and rename, so a crash mid-write can't corrupt it. The
+            // write runs inline with the frame; it is a plain container path, fast and small.
+            let file = PathBuf::from(path);
+            if let Some(dir) = file.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            let mut tmp = file.clone().into_os_string();
+            tmp.push(".pc-tmp");
+            std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+            match std::fs::rename(&tmp, &file) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    Err(e.to_string())
+                }
+            }
         })),
-        write_unconfirmed: true,
+        // File stamps and same-file checks, so replacing an existing Documents file asks
+        // first and a save over the document's own file is recognised, as on the desktop.
+        file_stamp: Some(Box::new(|path: &str| {
+            std::fs::metadata(path).ok().map(|m| FileStamp { len: m.len(), modified: m.modified().ok() })
+        })),
+        same_file: Some(Box::new(|a: &str, b: &str| {
+            use std::os::unix::fs::MetadataExt as _;
+            match (std::fs::metadata(a), std::fs::metadata(b)) {
+                (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+                _ => false,
+            }
+        })),
         encode_png: Some(Box::new(|w, h, rgba| {
             let img = Image::from_u8(w, h, ChannelLayout::Rgba, rgba.to_vec()).map_err(|e| e.to_string())?;
             photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &EncodeOptions::default()).map_err(|e| e.to_string())
@@ -414,7 +450,33 @@ fn app_support_dir() -> Option<PathBuf> {
 }
 
 fn read_prefs() -> Option<String> {
-    std::fs::read_to_string(app_support_dir()?.join(PREFS_FILE)).ok()
+    let text = std::fs::read_to_string(app_support_dir()?.join(PREFS_FILE)).ok()?;
+    Some(migrate_recent_files(&text))
+}
+
+/// Open Recent entries recorded by the export-sheet save design were bare file names (the
+/// staged tmp name, never openable: `open_paths` resolves them against the app's working
+/// directory, `/`). Point them at the Documents folder the save now uses, so an entry either
+/// opens or fails with the document's real name — anything with a `/` is a real path already.
+fn migrate_recent_files(prefs: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(prefs) else {
+        return prefs.to_string();
+    };
+    let Some(list) = value.get_mut("fileHandling").and_then(|f| f.get_mut("recentFiles")).and_then(|r| r.as_array_mut()) else {
+        return prefs.to_string();
+    };
+    let mut changed = false;
+    for entry in list.iter_mut() {
+        let Some(path) = entry.as_str() else { continue };
+        if path.contains('/') || path.is_empty() {
+            continue;
+        }
+        if let Some(dir) = documents_dir() {
+            *entry = serde_json::Value::String(dir.join(path).to_string_lossy().into_owned());
+            changed = true;
+        }
+    }
+    if changed { value.to_string() } else { prefs.to_string() }
 }
 
 fn write_prefs(text: &str) -> Result<(), String> {
@@ -423,4 +485,24 @@ fn write_prefs(text: &str) -> Result<(), String> {
     let tmp = dir.join(format!("{PREFS_FILE}.tmp"));
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, dir.join(PREFS_FILE)).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::migrate_recent_files;
+
+    #[test]
+    fn bare_recent_names_move_into_documents_and_real_paths_stay() {
+        let prefs = r#"{"fileHandling":{"recentFiles":["Untitled.psd","/var/mobile/Documents/real.psd",""]},"interface":{}}"#;
+        let moved = migrate_recent_files(prefs);
+        let value: serde_json::Value = serde_json::from_str(&moved).unwrap();
+        let recent = value["fileHandling"]["recentFiles"].as_array().unwrap();
+        assert!(recent[0].as_str().unwrap().contains("Documents/Untitled.psd"), "{}", recent[0]);
+        assert_eq!(recent[1].as_str().unwrap(), "/var/mobile/Documents/real.psd");
+        assert_eq!(recent[2].as_str().unwrap(), "");
+        // Corrupt preferences pass through untouched, and nothing is rewritten when it must not be.
+        assert_eq!(migrate_recent_files("not json"), "not json");
+        let nothing = r#"{"fileHandling":{"recentFiles":["/a.psd"]}}"#;
+        assert_eq!(migrate_recent_files(nothing), nothing);
+    }
 }

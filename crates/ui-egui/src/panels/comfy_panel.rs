@@ -7,6 +7,11 @@
 //! serial task queue — one task runs at a time, exactly what a ComfyUI server does — whose
 //! results land on the engine's result shelf, shown as a gallery where each image can become a
 //! selection-masked layer, its own document, or a saved file.
+//!
+//! The Image API shells (iPad, Android) have no workflow feature: no picker section at all — a
+//! run is the prompt and the sent image straight to the endpoint (`connection_api` shows that
+//! side), `add_to_queue` always sends the fixed "Image API Edit" workflow, and the controls the
+//! direct call does not take (Negative, Seed, Steps) stay hidden.
 
 use std::collections::HashMap;
 
@@ -291,6 +296,13 @@ fn add_to_queue(app: &mut PhotocraftApp) {
     let p = app.ui.comfy_panel.clone();
     let batch = p.batch.clamp(1, 8);
     let fixed = seed_of(&p.seed);
+    // The Image API shells run one fixed workflow (there is no picker to choose another): a
+    // stale name in the saved panel state must not route a mobile run into a ComfyUI graph.
+    let workflow = if app.session.comfy.image_api {
+        photocraft_engine::commands::comfy_workflow_cmds::BUILTIN_IMAGE_API.to_string()
+    } else {
+        p.workflow.clone()
+    };
     for i in 0..batch {
         // A fixed seed fans out to seed, seed+1, …; an empty one leaves the seed random.
         let seed = match fixed {
@@ -300,7 +312,7 @@ fn add_to_queue(app: &mut PhotocraftApp) {
         app.comfy_queue.tasks.push(QueueTask {
             state: "waiting".into(),
             prompt: effective_prompt(&p),
-            workflow: p.workflow.clone(),
+            workflow: workflow.clone(),
             source: p.source.clone(),
             place: p.place.clone(),
             seed,
@@ -402,8 +414,13 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.y = 6.0;
         connection(app, ui);
         ui.separator();
-        workflow(app, ui);
-        ui.separator();
+        // The Image API shells (iPad, Android) have no workflow feature: a run is the prompt
+        // and the sent image straight to the endpoint, so the picker row — and its importer —
+        // stay a desktop section (`add_to_queue` pins the one fixed workflow).
+        if !app.session.comfy.image_api {
+            workflow(app, ui);
+            ui.separator();
+        }
         source(app, ui);
         ui.separator();
         prompt(app, ui);
@@ -419,7 +436,11 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
 
 /// True when the picked workflow is the fixed Image API one (one direct call: no negative
 /// prompt, seed or steps to show). An empty pick is the first listed, like the picker itself.
+/// The Image API shells run only this workflow, whatever a stale panel state still names.
 fn api_workflow_selected(app: &PhotocraftApp) -> bool {
+    if app.session.comfy.image_api {
+        return true;
+    }
     let selected = if app.ui.comfy_panel.workflow.is_empty() {
         app.comfy_queue.workflows.first()
     } else {
@@ -444,7 +465,15 @@ fn connection(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label("URL");
         let r = egui::TextEdit::singleline(&mut url).desired_width(ui.available_width() - 70.0).show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        // Every keystroke is written through at once: the buffer is re-cloned from the
+        // preferences each frame and egui keeps no text of its own, so an edit that waited for
+        // Enter (which a touch keyboard never sends) would be dropped at the end of its frame.
+        // The tidy pass (trim, no trailing slash) runs only on Enter or when the field is left,
+        // or it would eat the very characters being typed.
+        if r.response.changed() {
+            app.session.prefs.edit(|p| p.integrations.comfy_url = url.clone());
+            app.comfy_queue.check = None;
+        } else if r.response.lost_focus() || (r.response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
             app.session.prefs.edit(|p| p.integrations.comfy_url = url.trim().trim_end_matches('/').to_string());
             app.comfy_queue.check = None;
         }
@@ -472,33 +501,45 @@ fn connection_api(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     });
     let i = app.session.prefs().integrations.clone();
     let (mut base, mut model, mut key) = (i.image_api_base.clone(), i.image_api_model.clone(), i.image_api_key.clone());
-    let commit = |app: &mut PhotocraftApp, base: &str, model: &str, key: &str| {
+    // `tidy` (Enter, or leaving a field) trims and drops a trailing slash; during typing it must
+    // stay off, or the normalizer would eat the characters being typed (a trailing space or `/`
+    // would vanish mid-word). Raw text as typed is already correct for the calls: the engine
+    // trims and appends `/v1` itself (`image_api_base_url`).
+    let commit = |app: &mut PhotocraftApp, base: &str, model: &str, key: &str, tidy: bool| {
         app.session.prefs.edit(|p| {
-            p.integrations.image_api_base = base.trim().trim_end_matches('/').to_string();
-            p.integrations.image_api_model = model.trim().to_string();
-            p.integrations.image_api_key = key.trim().to_string();
+            p.integrations.image_api_base = if tidy { base.trim().trim_end_matches('/').to_string() } else { base.to_string() };
+            p.integrations.image_api_model = if tidy { model.trim().to_string() } else { model.to_string() };
+            p.integrations.image_api_key = if tidy { key.trim().to_string() } else { key.to_string() };
         });
         app.comfy_queue.check = None;
     };
     ui.horizontal(|ui| {
         ui.label("Endpoint");
         let r = egui::TextEdit::singleline(&mut base).desired_width(ui.available_width() - 70.0).hint_text("https://api.example.com").show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            commit(app, &base, &model, &key);
+        // Write every keystroke through (no Enter exists on a touch keyboard); blur or Enter
+        // additionally tidies the value.
+        if r.response.changed() {
+            commit(app, &base, &model, &key, false);
+        } else if r.response.lost_focus() || (r.response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+            commit(app, &base, &model, &key, true);
         }
     });
     ui.horizontal(|ui| {
         ui.label("Model");
         let r = egui::TextEdit::singleline(&mut model).desired_width(ui.available_width() - 70.0).hint_text("gpt-image-2").show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            commit(app, &base, &model, &key);
+        if r.response.changed() {
+            commit(app, &base, &model, &key, false);
+        } else if r.response.lost_focus() || (r.response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+            commit(app, &base, &model, &key, true);
         }
     });
     ui.horizontal(|ui| {
         ui.label("Key");
         let r = egui::TextEdit::singleline(&mut key).password(true).desired_width(ui.available_width() - 70.0).show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            commit(app, &base, &model, &key);
+        if r.response.changed() {
+            commit(app, &base, &model, &key, false);
+        } else if r.response.lost_focus() || (r.response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+            commit(app, &base, &model, &key, true);
         }
         if ui.button("Check").clicked() {
             match app.run("ai.comfyui.check", json!({})) {
@@ -516,6 +557,7 @@ fn connection_api(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             }
         }
     });
+    ui.label(egui::RichText::new("One direct call: your prompt and the sent image — no workflow, no server queue.").small().weak());
 }
 
 // ---- workflow picker
@@ -776,7 +818,12 @@ fn params(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             let label = if n > 1 { format!("Add {} to Queue", n) } else { "Add to Queue".to_string() };
             let enabled = !app.comfy_queue.workflows.is_empty() && app.session.active().is_some();
             if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-                if app.ui.comfy_panel.workflow.is_empty() {
+                if app.session.comfy.image_api {
+                    // No picker on the Image API shells: the one fixed workflow, never the
+                    // first listed (which is a desktop ComfyUI graph).
+                    app.ui.comfy_panel.workflow =
+                        photocraft_engine::commands::comfy_workflow_cmds::BUILTIN_IMAGE_API.to_string();
+                } else if app.ui.comfy_panel.workflow.is_empty() {
                     app.ui.comfy_panel.workflow = app.comfy_queue.workflows.first().map(|w| w.0.clone()).unwrap_or_default();
                 }
                 add_to_queue(app);

@@ -604,8 +604,12 @@ fn update_canvas_navigation(app: &mut PhotocraftApp, view: &mut View, input: Can
     // Interface › Enable Animations off: the wheel moves the canvas without a glide (#5721).
     // General › Animated Zoom: the wheel zoom eases over the frames of a notch, or is one instant step.
     // Enhanced Controls › Enable Gestures off: two fingers on a touch screen neither zoom nor
-    // turn the view (#204); the mouse and trackpad are unaffected.
-    let touch_gestures = app.session.prefs().enhanced_controls.touch_gestures;
+    // turn the view (#204); the mouse and trackpad are unaffected. The fingers must be live
+    // (`touch_live`): a touch whose lift never arrived (a focus change mid-gesture, a wedged
+    // input pipeline) stays "down" in egui forever, and would turn every later one-finger drag
+    // into a phantom pinch.
+    let touch_gestures = app.session.prefs().enhanced_controls.touch_gestures
+        && crate::input::touch_live::live_touches(input.ctx) >= 2;
     let wheel = crate::wheel_nav::read_with(
         input.ctx,
         app.session.prefs().general.zoom_with_scroll_wheel,
@@ -1016,8 +1020,11 @@ fn handle_canvas_tool_stroke(
     // Touch arbitration (Photoshop on iPad): while two or more fingers are down, the canvas
     // navigates (the pan above) and the tool stands down. A gesture the second finger lands in
     // the middle of is cancelled whole, and the phantom tap of the last finger lifting is
-    // swallowed for a moment. One finger, a pencil, and the mouse are unaffected.
-    let multi_touch = ui.input(|i| i.multi_touch().map(|m| m.num_touches).unwrap_or(1)) >= 2;
+    // swallowed for a moment. One finger, a pencil, and the mouse are unaffected. The fingers
+    // must be live (`touch_live`): egui ends a touch only when its lift arrives, so one whose
+    // lift was lost would count every later one-finger stroke as multi-touch and cancel it.
+    let multi_touch = ui.input(|i| i.multi_touch().map(|m| m.num_touches).unwrap_or(1)) >= 2
+        && crate::input::touch_live::live_touches(ui.ctx()) >= 2;
     let arb_id = egui::Id::unique(("pc-touch-arb", input.idx));
     let now_s = ui.input(|i| i.time);
     let (was_multi, mut suppress_until) = ctx.data(|d| d.get_temp::<(bool, f64)>(arb_id)).unwrap_or((false, 0.0));

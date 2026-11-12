@@ -10,15 +10,28 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- The in-app file browser (apps/photocraft-android/src/browser.rs) reads and writes the
          shared storage directly: the system SAF pickers can't answer a NativeActivity (no
-         onActivityResult), and this grant makes the tree plain std::fs. Granted once by the
-         user in settings (the browser links there); fine for a sideloaded team build — the
-         Play store would reject it, and this APK is not for the store. -->
+         onActivityResult), and these grants make the tree plain std::fs. READ/WRITE are
+         ordinary runtime permissions (the gallery's Allow button and `pm grant` answer them);
+         with the app targeting 29 they carry the *legacy* storage view on Android 11+, which
+         keeps raw-path access to the whole shared storage — including RAW and .psd files — on
+         versions that removed MANAGE_EXTERNAL_STORAGE. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <!-- Android 13+ splits media read out of READ_EXTERNAL_STORAGE; the gallery's MediaStore
+         query needs it when the legacy pair is denied (a pure scoped-storage device). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- The pre-scoped-storage contract the legacy view above rides on, honored for apps
+         targeting 29 (the APK's targetSdkVersion): ask for it explicitly so the runtime
+         permissions above mean full-path reads and writes, not the media-filtered view. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
 
     <application
         android:label="PhotoComfy"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:hasCode="false"
         android:debuggable="true"
+        android:requestLegacyExternalStorage="true"
         android:extractNativeLibs="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <!-- configChanges covers rotation, fold and density changes so the activity (and the

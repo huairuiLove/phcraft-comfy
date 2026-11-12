@@ -98,8 +98,10 @@ WORK="$(cd "$(dirname "$0")" && pwd)/build"
 rm -rf "$WORK"
 mkdir -p "$WORK/pkg/lib/$ABI" "$OUT_DIR"
 cp "$SO" "$WORK/pkg/lib/$ABI/"
+"$BT/aapt2" compile --dir "$(dirname "$0")/res" -o "$WORK/resources.zip"
 "$BT/aapt2" link \
     -I "$PLATFORM/android.jar" \
+    -R "$WORK/resources.zip" \
     --manifest "$(dirname "$0")/AndroidManifest.xml" \
     --min-sdk-version "$API" \
     --target-sdk-version "$API_TARGET" \
@@ -128,3 +130,5 @@ APK="$OUT_DIR/PhotoComfy.apk"
     --ks-key-alias photocomfy --out "$APK" "$WORK/aligned.apk"
 "$BT/apksigner" verify "$APK"
 echo "installed $(wc -c < "$APK" | tr -d ' ') bytes into $APK ($(basename "$NDK") + build-tools $(basename "$BT"))"
+echo "note: only $APK is signed — the intermediates in $(dirname "$0")/build/ (base.apk,"
+echo "      aligned.apk) have no signature and will not install on any device."

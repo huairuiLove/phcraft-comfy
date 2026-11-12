@@ -1,6 +1,7 @@
 pub(super) mod alt_grab;
 pub(super) mod blend_keys;
 pub(super) mod control_click;
+pub(super) mod finger;
 pub mod hold_keys;
 pub(super) mod layout_keys;
 pub mod nudge_bundle;
@@ -13,4 +14,5 @@ pub(super) mod single_line_drag;
 pub mod spring_tools;
 pub mod stylus;
 pub(super) mod tool_shortcuts;
+pub(super) mod touch_live;
 pub mod touch_twins;

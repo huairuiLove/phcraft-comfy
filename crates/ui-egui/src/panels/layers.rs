@@ -525,6 +525,10 @@ pub(super) fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         if ui.add_enabled_ui(can_link, |ui| icons::button(ui, "link-2", 26.0, false, tl!("Link layers"))).inner.clicked() {
             actions.push(("layer.linkLayers".into(), json!({})));
         }
+        // The layer tray: stash layers from this document and place them in another later. A
+        // touch screen shows one document at a time, so the drag onto another document's tab has
+        // nothing to aim at; the tray is the two-step replacement.
+        super::layer_tray::footer_button(app, ui, &mut actions, footer_drag);
     });
     for (id, p) in actions {
         // A row click commits even when it selects the layer already being edited (#5584).
@@ -562,10 +566,15 @@ pub(super) fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             app.ui.dock.collapsed.retain(|g| *g != crate::dock::Group::Properties);
             continue;
         }
-        if p.is_null() || id == "layer.newFillLayer.solidColor" || id == photocraft_engine::pattern_fill_cmds::CREATE {
-            // Context-menu items and the Layers footer's Solid Color… and Pattern… actions behave
-            // like their menu-bar twins: a new Solid Color fill opens its picker, a new Pattern
-            // fill the Pattern Fill dialog.
+        // Context-menu items and the Layers footer's Solid Color… and Pattern… actions behave
+        // like their menu-bar twins: a new Solid Color fill opens its picker, a new Pattern
+        // fill the Pattern Fill dialog. Smart Filter blending opens its dialog at the pressed
+        // row's index; `invoke` runs the engine command when blend values are given instead.
+        if p.is_null()
+            || id == "layer.newFillLayer.solidColor"
+            || id == photocraft_engine::pattern_fill_cmds::CREATE
+            || id == "layer.smartFilter.blendingOptions"
+        {
             let ctx = ui.ctx().clone();
             let params = if p.is_null() { json!({}) } else { p };
             if let Err(e) = crate::menus::invoke(app, &ctx, &id, params) {
@@ -582,6 +591,7 @@ pub(super) fn footer_label(command: &str) -> &'static str {
     match command {
         "layer.delete" => tl!("Delete layer"),
         "layer.duplicate" => tl!("Create a new layer"),
+        "layer.tray.put" => tl!("Add to Tray"),
         _ => tl!("Create a new group"),
     }
 }

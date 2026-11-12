@@ -60,12 +60,14 @@ fn tapping_a_file_row_answers_its_path() {
     let mut harness = harness(&browser);
 
     // The shell's file_dialog service routes an Open request into the browser; starting in
-    // the fixture root lists the Download folder as a row.
+    // the fixture root lists the Download folder as a row. An unfiltered Open lands on the
+    // Gallery tab first (off-device: the gate), so pick the Files tab before browsing.
     let (reply, rx) = reply(&harness.ctx);
     browser.begin_open(true, Some(dir.to_string_lossy().into_owned()), None, reply);
     harness.run_steps(3);
     assert!(browser.is_active(), "the browser opens");
-
+    harness.get_by_label("Files").click();
+    harness.run_steps(3);
     harness.get_by_label("[dir]  Download").click();
     harness.run_steps(3);
     let row = harness.get_by_label("       picture.png");
@@ -104,8 +106,8 @@ fn cancel_answers_none_and_closes() {
 
 #[test]
 fn save_mode_answers_the_prefilled_path() {
-    // A fresh browser has no last-visited folder, so Save starts at the root (the temp dir
-    // off-device) and the prefilled name joins there.
+    // A bare suggested name starts in the app's Projects folder (the library every save
+    // accumulates into), so the prefilled name joins there.
     let browser = Browser::shared();
     let mut harness = harness(&browser);
     let (reply, rx) = reply(&harness.ctx);
@@ -120,7 +122,9 @@ fn save_mode_answers_the_prefilled_path() {
 
     assert_eq!(
         recv(&rx),
-        Some(Some(FileDialogAnswer::SaveTo(std::env::temp_dir().join("artwork.png").to_string_lossy().into_owned())))
+        Some(Some(FileDialogAnswer::SaveTo(
+            std::env::temp_dir().join("Projects").join("artwork.png").to_string_lossy().into_owned()
+        )))
     );
     assert!(!browser.is_active());
 }

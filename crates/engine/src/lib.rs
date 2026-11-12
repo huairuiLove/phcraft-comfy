@@ -117,6 +117,7 @@ pub use cmd::layer_mask_props_cmds;
 pub use cmd::layer_menu_cmds;
 pub use cmd::layer_multi_cmds;
 pub use cmd::layer_nav_cmds;
+pub use cmd::layer_tray_cmds;
 pub use cmd::layer_xmp_cmds;
 pub use cmd::lens_cmds;
 pub use cmd::magnetic_cmds;
@@ -233,6 +234,11 @@ pub struct Session {
     batch_history_observer: Option<fn(&Session)>,
     /// Pixels copied with Edit › Copy / Cut (shared by all documents, like Photoshop).
     pub clipboard: Option<edit_cmds::Clip>,
+    /// The layer tray (`layer.tray.*`): layers stashed from any open document to place into
+    /// another later. A touch screen shows one document at a time, so this replaces dragging
+    /// layers onto another document's tab. Slots hold their own copies and outlive their source
+    /// document; the tray lasts for the session, like the clipboard.
+    pub layer_tray: Vec<layer_tray_cmds::TraySlot>,
     /// Layer › Layer Style › Copy Layer Style: the effects and the Blending Options
     /// ([`CopiedStyle`]: blend mode, fill opacity, Advanced Blending, Blend If, channels).
     pub style_clipboard: Option<CopiedStyle>,

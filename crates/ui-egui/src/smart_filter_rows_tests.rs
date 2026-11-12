@@ -399,3 +399,58 @@ fn double_clicking_the_liquify_filter_of_an_inactive_smart_object_edits_it() {
     let liquify = sm.smart_filters.iter().find(|f| f.command == photocraft_engine::distort_cmds::LIQUIFY).unwrap();
     assert_eq!(liquify.params["strokes"].as_array().map(Vec::len), Some(2), "the new stroke was kept");
 }
+
+/// A right-click on a filter row — the click the touch shells' long-press recognizer injects
+/// after a still half-second hold (`crate::long_press`), a finger's only way to a context menu —
+/// opens the row's menu, and its Delete item removes that one filter. The smart object is
+/// selected first, as the row menu does elsewhere in the panel.
+#[test]
+fn a_press_on_a_filter_row_opens_its_menu_and_deletes_that_filter() {
+    let (mut h, a, _, _) = panel();
+    let offset = at(&h, "Offset");
+    press(&mut h, offset);
+    assert!(h.query_by_label("Delete Smart Filter").is_some(), "the filter's menu opened");
+    h.get_by_label("Delete Smart Filter").click();
+    h.run_steps(4);
+    assert_eq!(filters(&h, a), ["filter.blur.gaussianBlur"], "only the pressed filter is gone");
+    assert_eq!(h.state().session.active().unwrap().active_layer, Some(LayerId(a)), "the smart object was selected first");
+    assert_eq!(h.state().session.active().unwrap().doc.layers.len(), 4, "no layer was deleted");
+    assert!(!h.state().ui.status_error, "{}", h.state().ui.status);
+}
+
+/// The Smart Filters header row's menu clears every filter of the smart object, as dropping the
+/// header row on the footer's Delete does.
+#[test]
+fn a_press_on_the_smart_filters_row_clears_them_all() {
+    let (mut h, a, _, _) = panel();
+    let header = at(&h, "Smart Filters");
+    press(&mut h, header);
+    assert!(h.query_by_label("Clear Smart Filters").is_some(), "the header row's menu opened");
+    h.get_by_label("Clear Smart Filters").click();
+    h.run_steps(4);
+    assert!(filters(&h, a).is_empty());
+    assert_eq!(h.state().session.active().unwrap().doc.layers.len(), 4, "no layer was deleted");
+}
+
+/// Blending Options… in the menu opens the pressed filter's Blending Options dialog (as the
+/// row's sliders icon does on a double-click), not the engine command's silent no-dialog run.
+#[test]
+fn blending_options_in_the_menu_opens_that_filter() {
+    let (mut h, _, _, _) = panel();
+    let blur = at(&h, "Gaussian Blur");
+    press(&mut h, blur);
+    h.get_by_label("Blending Options…").click();
+    h.run_steps(4);
+    let d = h.state().ui.dialogs.last().expect("the Blending Options dialog opened");
+    assert_eq!(d.fields.get("__filterName"), Some(&json!("Gaussian Blur")), "for the pressed filter");
+}
+
+/// A right-click, as the touch shells' long-press recognizer injects it.
+fn press(h: &mut egui_kittest::Harness<'static, PhotocraftApp>, p: Pos2) {
+    h.event(egui::Event::PointerMoved(p));
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+}

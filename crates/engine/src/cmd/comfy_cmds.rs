@@ -626,7 +626,7 @@ pub fn history_error(history: &Value, prompt_id: &str) -> Option<String> {
 /// The transport, or why there is none (web, headless).
 pub(crate) fn transport_of(s: &Session) -> Result<ComfyFn> {
     s.comfy.transport.clone().ok_or_else(|| {
-        EngineError::Other("ComfyUI generation needs the desktop app: it talks to a local ComfyUI server over HTTP".into())
+        EngineError::Other("image generation needs a shell with a backend: the desktop app drives a local ComfyUI server, the mobile apps call the Image API directly".into())
     })
 }
 
@@ -1009,7 +1009,7 @@ fn models(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(crate) fn transport_enabled(s: &Session) -> std::result::Result<(), String> {
-    s.comfy.transport.as_ref().map(|_| ()).ok_or_else(|| "ComfyUI image generation needs the desktop app (it talks to a local ComfyUI server over HTTP)".into())
+    s.comfy.transport.as_ref().map(|_| ()).ok_or_else(|| "image generation needs a shell with a backend (the desktop app drives a local ComfyUI server; the mobile apps call the Image API)".into())
 }
 
 /// The ComfyUI bridge commands.

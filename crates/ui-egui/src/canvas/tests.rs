@@ -3140,3 +3140,176 @@ fn two_fingers_cancel_a_stroke_and_pan_instead_of_painting() {
         buf.px.iter().find(|p| p[0] > 1e-3).copied()
     );
 }
+
+/// The touch shells swallow a long-press's finger until it lifts (`long_press`). The lift
+/// itself used to be swallowed whole: egui never saw the touch end, kept it "down" forever,
+/// and every later one-finger drag read as multi-touch — zooming the canvas instead of
+/// painting. The lift now passes on as a Cancel, so the next finger paints again.
+#[test]
+fn after_a_long_press_one_finger_paints_instead_of_zooming() {
+    use crate::long_press::LongPress;
+    use egui::{TouchId, TouchPhase};
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({"width": 64, "height": 64, "background": "transparent"})).unwrap();
+    app.run("tools.setBrush", json!({"brush": {"size": 8, "hardness": 1.0, "smoothing": {"amount": 0.0}}})).unwrap();
+    app.run("tools.setColors", json!({"foreground": [0.0, 0.0, 0.0, 1.0]})).unwrap();
+    app.sync_views();
+    app.ui.tool = Tool::Brush;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(480.0, 360.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, (app, ready): &mut (PhotocraftApp, bool)| {
+                if *ready {
+                    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| document_area(app, ui));
+                }
+            },
+            (app, false),
+        );
+    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::Pro);
+    h.state_mut().1 = true;
+    h.run_steps(3);
+    let centre = h.state().0.last_canvas_rect.center();
+    let centre = pos2(centre.x, centre.y);
+    let touch = |id: u64, phase: TouchPhase, pos: egui::Pos2| egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: TouchId(id), phase, pos, force: None };
+    let press = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    // The shell pipeline: the long-press recognizer reads each frame's events before egui does.
+    let mut lp = LongPress::default();
+    let mut t = 1.0;
+    let shell = |h: &mut egui_kittest::Harness<'_, (PhotocraftApp, bool)>, lp: &mut LongPress, t: &mut f64, mut events: Vec<egui::Event>| {
+        lp.frame(&mut events, Some(*t));
+        h.input_mut().events = events;
+        h.step();
+        *t += 1.0 / 60.0;
+    };
+    // A finger lands and holds still: half a second later the long-press fires its synthetic
+    // right-click (on the canvas, the Brush Preset picker opens) and swallows the finger.
+    shell(&mut h, &mut lp, &mut t, vec![touch(7, TouchPhase::Start, centre), press(centre, true)]);
+    // Step until the recognizer actually fires (its own remaining-time read is for scheduling
+    // repaints; the fire itself lands in the frame `lp.frame` appends the right-click to).
+    let mut fired = false;
+    while !fired {
+        let mut events = Vec::new();
+        lp.frame(&mut events, Some(t));
+        t += 1.0 / 60.0;
+        fired = events.iter().any(|e| matches!(e, egui::Event::PointerButton { button: egui::PointerButton::Secondary, pressed: true, .. }));
+        h.input_mut().events = events;
+        h.step();
+    }
+    // The finger lifts. Its pointer release stays swallowed (no click-through), but the touch
+    // itself must end for egui.
+    shell(&mut h, &mut lp, &mut t, vec![touch(7, TouchPhase::End, centre), press(centre, false), egui::Event::PointerGone]);
+    // Dismiss whatever the right-click opened with a pointer tap away from it.
+    let away = pos2(40.0, 40.0);
+    shell(&mut h, &mut lp, &mut t, vec![press(away, true)]);
+    shell(&mut h, &mut lp, &mut t, vec![press(away, false)]);
+    h.run_steps(2);
+    let view_before = h.state().0.ui.views.first().expect("a view");
+    let (zoom_before, center_before) = (view_before.zoom, view_before.center);
+    let painted_before = {
+        let st = h.state().0.session.active().expect("the document");
+        photocraft_compose::flatten(&st.doc).px.iter().filter(|p| p[3] > 1e-3).count()
+    };
+    // A fresh finger paints. With the swallowed lift it used to read as the second finger of a
+    // pinch: the stroke was cancelled and the drag zoomed the view instead.
+    let from = pos2(centre.x - 40.0, centre.y);
+    let to = pos2(centre.x + 40.0, centre.y);
+    shell(&mut h, &mut lp, &mut t, vec![touch(8, TouchPhase::Start, from), press(from, true)]);
+    shell(&mut h, &mut lp, &mut t, vec![touch(8, TouchPhase::Move, from + egui::vec2(20.0, 0.0)), egui::Event::PointerMoved(from + egui::vec2(20.0, 0.0))]);
+    assert!(h.state().0.drag.is_some(), "one finger after a long-press still starts the stroke");
+    shell(&mut h, &mut lp, &mut t, vec![touch(8, TouchPhase::Move, to), egui::Event::PointerMoved(to)]);
+    shell(&mut h, &mut lp, &mut t, vec![touch(8, TouchPhase::End, to), press(to, false), egui::Event::PointerGone]);
+    h.run_steps(2);
+    let view_after = h.state().0.ui.views.first().expect("a view");
+    assert!((view_after.zoom - zoom_before).abs() < 1e-6, "the stroke does not zoom the view ({} → {})", zoom_before, view_after.zoom);
+    assert!(view_after.center == center_before, "the stroke does not pan the view ({center_before:?} → {:?})", view_after.center);
+    let painted_after = {
+        let st = h.state().0.session.active().expect("the document");
+        photocraft_compose::flatten(&st.doc).px.iter().filter(|p| p[3] > 1e-3).count()
+    };
+    assert!(painted_after > painted_before, "the stroke paints ({painted_before} → {painted_after} painted pixels)");
+}
+
+/// A pinch whose second lift never arrives (a focus change mid-gesture, a wedged input
+/// pipeline) leaves that touch "down" in egui forever. It must not turn every later one-finger
+/// drag into a phantom pinch: after [`touch_live`]'s grace the stale finger stops counting, and
+/// one finger paints while the view stands still.
+#[test]
+fn a_stale_touch_does_not_turn_later_strokes_into_zoom() {
+    use egui::{TouchId, TouchPhase};
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({"width": 64, "height": 64, "background": "transparent"})).unwrap();
+    app.run("tools.setBrush", json!({"brush": {"size": 8, "hardness": 1.0, "smoothing": {"amount": 0.0}}})).unwrap();
+    app.run("tools.setColors", json!({"foreground": [0.0, 0.0, 0.0, 1.0]})).unwrap();
+    app.sync_views();
+    app.ui.tool = Tool::Brush;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(480.0, 360.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, (app, ready): &mut (PhotocraftApp, bool)| {
+                if *ready {
+                    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| document_area(app, ui));
+                }
+            },
+            (app, false),
+        );
+    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::Pro);
+    h.state_mut().1 = true;
+    h.run_steps(3);
+    let centre = h.state().0.last_canvas_rect.center();
+    let centre = pos2(centre.x, centre.y);
+    let touch = |id: u64, phase: TouchPhase, pos: egui::Pos2| egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: TouchId(id), phase, pos, force: None };
+    let press = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    // A real pinch: finger one (the pointer) and finger two pan the view together…
+    h.input_mut().events = vec![touch(1, TouchPhase::Start, centre), press(centre, true)];
+    h.step();
+    h.input_mut().events = vec![touch(2, TouchPhase::Start, centre + vec2(40.0, 0.0))];
+    h.step();
+    let center_before = h.state().0.ui.views.first().expect("a view").center;
+    h.input_mut().events = vec![
+        touch(1, TouchPhase::Move, centre - vec2(30.0, 0.0)),
+        touch(2, TouchPhase::Move, centre + vec2(10.0, 0.0)),
+        egui::Event::PointerMoved(centre - vec2(30.0, 0.0)),
+    ];
+    h.step();
+    let center_panned = h.state().0.ui.views.first().expect("a view").center;
+    assert!(center_panned != center_before, "two live fingers pan");
+    // …then finger one lifts cleanly, and finger two's lift never arrives.
+    h.input_mut().events = vec![touch(1, TouchPhase::End, centre - vec2(30.0, 0.0)), press(centre - vec2(30.0, 0.0), false), egui::Event::PointerGone];
+    h.step();
+    // The stale finger reports nothing for longer than `touch_live`'s grace.
+    h.run_steps(200);
+    let (zoom_before, center_before) = {
+        let v = h.state().0.ui.views.first().expect("a view");
+        (v.zoom, v.center)
+    };
+    let painted_before = {
+        let st = h.state().0.session.active().expect("the document");
+        photocraft_compose::flatten(&st.doc).px.iter().filter(|p| p[3] > 1e-3).count()
+    };
+    // A fresh finger paints: not the phantom second finger of a pinch with the stale one.
+    let from = pos2(centre.x - 40.0, centre.y + 20.0);
+    let to = pos2(centre.x + 40.0, centre.y + 20.0);
+    h.input_mut().events = vec![touch(3, TouchPhase::Start, from), press(from, true)];
+    h.step();
+    h.input_mut().events = vec![touch(3, TouchPhase::Move, from + vec2(20.0, 0.0)), egui::Event::PointerMoved(from + vec2(20.0, 0.0))];
+    h.step();
+    assert!(h.state().0.drag.is_some(), "one finger starts the stroke despite the stale touch");
+    h.input_mut().events = vec![touch(3, TouchPhase::Move, to), egui::Event::PointerMoved(to)];
+    h.step();
+    h.input_mut().events = vec![touch(3, TouchPhase::End, to), press(to, false), egui::Event::PointerGone];
+    h.step();
+    h.run_steps(2);
+    let (zoom_after, center_after) = {
+        let v = h.state().0.ui.views.first().expect("a view");
+        (v.zoom, v.center)
+    };
+    assert!((zoom_after - zoom_before).abs() < 1e-6, "the stroke does not zoom the view ({} → {})", zoom_before, zoom_after);
+    assert!(center_after == center_before, "the stroke does not pan the view ({center_before:?} → {center_after:?})");
+    let painted_after = {
+        let st = h.state().0.session.active().expect("the document");
+        photocraft_compose::flatten(&st.doc).px.iter().filter(|p| p[3] > 1e-3).count()
+    };
+    assert!(painted_after > painted_before, "the stroke paints ({painted_before} → {painted_after} painted pixels)");
+}

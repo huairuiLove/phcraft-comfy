@@ -45,15 +45,28 @@ __attribute__((visibility("default"))) void pc_pick_open(int allow_multiple) {
 
 // Present the export sheet for a file the shell already staged in the app's tmp directory;
 // the system copies it to the chosen destination (asCopy leaves our staged file alone).
+// The C string is copied into an NSString BEFORE dispatching: a block captures a `const char *`
+// by value (the pointer, not the bytes), and the caller's CString is freed when pc_pick_export
+// returns — reading it inside the block was a use-after-free that handed the picker a garbage
+// path, and initForExportingURLs then aborted the app (it requires an existing file).
 __attribute__((visibility("default"))) void pc_pick_export(const char *path) {
+    NSString *staged = (path == NULL) ? nil : [NSString stringWithUTF8String:path];
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *root = PCRootViewController();
-        if (root == nil || path == NULL) {
+        if (root == nil || staged == nil) {
             if (PCCancelCallback != NULL) PCCancelCallback();
             return;
         }
         PCExportMode = YES;
-        NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+        NSURL *url = [NSURL fileURLWithPath:staged];
+        // initForExportingURLs raises NSInternalInconsistencyException (aborting the process)
+        // unless every URL names an existing file; the shell stages the file first, but a
+        // vanished temp file must cancel the export, not kill the app.
+        if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
+            NSLog(@"PCDP export staged file missing: %@", url.path);
+            if (PCCancelCallback != NULL) PCCancelCallback();
+            return;
+        }
         UIDocumentPickerViewController *picker =
             [[UIDocumentPickerViewController alloc] initForExportingURLs:@[ url ] asCopy:YES];
         picker.delegate = [PCDocumentPickerDelegate shared];
