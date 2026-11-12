@@ -934,10 +934,11 @@ pub fn dialog(app: &mut PhotocraftApp, ctx: &egui::Context) {
         }
     };
     let t = Tokens::get(ctx);
+    let touch = crate::touch::on(app);
     let mut cancel_it = false;
     // Photoshop doesn't dim the window behind its progress dialog either.
     let modal = egui::Modal::new(egui::Id::unique("job-progress")).backdrop_color(Color32::from_black_alpha(36)).show(ctx, |ui| {
-        ui.set_width(360.0);
+        ui.set_width(if touch { 320.0 } else { 360.0 });
         ui.label(RichText::new(tl!(&j.label)).font(crate::theme::semibold(15.0)));
         ui.add_space(4.0);
         crate::widgets::hairline(ui);
@@ -956,8 +957,16 @@ pub fn dialog(app: &mut PhotocraftApp, ctx: &egui::Context) {
         });
         ui.add_space(12.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            cancel_it = crate::widgets::secondary_button(ui, tl!("Cancel"), 84.0).clicked();
-            ui.label(RichText::new(tl!("Esc to cancel")).color(t.text_faint).size(11.0));
+            if touch {
+                // A finger, not a keyboard: a taller Cancel and no Esc hint (the modal is the
+                // only signal a phone has that the filter is still running, so it must read big).
+                let target = ui.style().spacing.interact_size.y.max(44.0);
+                ui.style_mut().spacing.interact_size.y = target;
+                cancel_it = crate::widgets::secondary_button(ui, tl!("Cancel"), 120.0).clicked();
+            } else {
+                cancel_it = crate::widgets::secondary_button(ui, tl!("Cancel"), 84.0).clicked();
+                ui.label(RichText::new(tl!("Esc to cancel")).color(t.text_faint).size(11.0));
+            }
         });
     });
     // A click on the backdrop doesn't cancel the work; Esc is handled in `tick`.

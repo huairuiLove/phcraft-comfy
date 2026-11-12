@@ -239,6 +239,35 @@ fn filter_preview_factor_caps_at_the_view_without_overriding_the_preference() {
     }
 }
 
+/// The adaptive factor: a preview frame that measured slow while its parameters moved coarsens
+/// the factor the canvas requests — past what the view itself asks for at 100 %, where a phone
+/// cannot keep up — and a settled frame refines back toward it. An unscalable filter
+/// ([`crate::filter_dialog::full_resolution_preview`]) is never coarsened.
+#[test]
+fn filter_preview_factor_degrades_after_slow_frames_and_refines_on_settle() {
+    let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+    // 9 MP: reduced previews halve it (empty tiles, so nothing is allocated).
+    app.run("file.new", json!({"width": 3000, "height": 3000, "background": "transparent"})).unwrap();
+    let doc = app.session.active().unwrap().doc.clone();
+    let params = json!({"amount": 100, "radius": 4.0, "threshold": 0});
+    let k = |app: &mut PhotocraftApp, zoom: f32| {
+        app.ui.views.get_mut(0).expect("the new document's view").zoom = zoom;
+        super::filter_preview_factor(app, &doc, "filter.sharpen.unsharpMask", &params)
+    };
+    let slow = super::preview_degrade::SLOW_MS + 1.0;
+    assert_eq!(k(&mut app, 1.0), 1, "before anything is measured, the view decides");
+    app.preview_degrade.moving(slow);
+    assert_eq!(k(&mut app, 1.0), 2, "a slow drag coarsens past the view's own factor");
+    assert_eq!(k(&mut app, 0.25), 4, "the document-level proxy coarsens too");
+    app.preview_degrade.settled();
+    assert_eq!(k(&mut app, 1.0), 1, "a settled frame refines back to the view");
+    // An unscalable filter keeps every pixel however slow the device measured.
+    app.preview_degrade.moving(slow);
+    app.preview_degrade.moving(slow);
+    app.ui.views.get_mut(0).expect("the new document's view").zoom = 1.0;
+    assert_eq!(super::filter_preview_factor(&app, &doc, "filter.noise.addNoise", &json!({"amount": 20})), 1);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn every_filter_previews_off_the_ui_thread_and_a_newer_value_cancels_the_old() {

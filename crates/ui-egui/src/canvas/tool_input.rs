@@ -54,6 +54,14 @@ fn tool_move(app: &mut PhotocraftApp, x: f64, y: f64, pressure: f32, mods: egui:
 }
 
 fn preflight_tool_event(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) -> Option<(bool, egui::Modifiers)> {
+    // Pen-only painting (the iPad): a brush-family tool takes only the pen, so a finger's press
+    // stops here — before any drag, live stroke or click dab below starts — while the finger
+    // keeps every other use of the canvas (panning, selections, menus, picking).
+    if let ToolEvent::Down { .. } = ev
+        && crate::input::finger::refuses_finger(app, event_tool(app, mods).is_brushlike())
+    {
+        return None;
+    }
     // A press anywhere but on a guide deselects the selected guide (`guide_select`).
     if let ToolEvent::Down { x, y, .. } = ev
         && app.ui.selected_guide.is_some()
@@ -342,14 +350,6 @@ fn handle_eyedropper_event(app: &mut PhotocraftApp, tool: Tool, ev: ToolEvent, m
 
 /// Tool state machine. Shared by mouse input and automation.
 pub fn tool_event(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) {
-    // Pen-only painting (the iPad): a brush-family tool takes only the pen, so a finger's press
-    // stops here — before any drag, live stroke or click dab below starts — while the finger
-    // keeps every other use of the canvas (panning, selections, menus, picking).
-    if matches!(ev, ToolEvent::Down { .. })
-        && crate::input::finger::refuses_finger(app, event_tool(app, mods).is_brushlike())
-    {
-        return;
-    }
     if consumes_cancelled_vector_event(app, ev) {
         return;
     }

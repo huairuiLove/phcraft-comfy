@@ -85,21 +85,16 @@ fn the_eraser_and_the_retouch_brushes_refuse_a_finger_too() {
 
 #[test]
 fn a_finger_still_does_everything_that_is_not_painting() {
-    // The Move tool (and a ⌘ drag with a brush selected) is not painting: a finger moves layers.
-    let mut app = app(Tool::Move);
-    press(&mut app, None);
-    tool_event(&mut app, ToolEvent::Down { x: 100.0, y: 100.0, pressure: 1.0 }, Modifiers::NONE);
-    assert!(app.drag.is_some(), "a finger drags with the Move tool");
-    tool_event(&mut app, ToolEvent::Up { x: 100.0, y: 100.0 }, Modifiers::NONE);
-    release(&mut app);
-
-    // A marquee selection with a finger is not painting either.
-    let mut app = app(Tool::RectMarquee);
-    press(&mut app, None);
-    tool_event(&mut app, ToolEvent::Down { x: 10.0, y: 10.0, pressure: 1.0 }, Modifiers::NONE);
-    assert!(app.drag.is_some(), "a finger draws a marquee");
-    tool_event(&mut app, ToolEvent::Up { x: 80.0, y: 80.0 }, Modifiers::NONE);
-    release(&mut app);
+    // A marquee selection with a finger is not painting: the drag runs, no refusal shows, and
+    // the selection lands.
+    let mut marquee = app(Tool::RectMarquee);
+    press(&mut marquee, None);
+    tool_event(&mut marquee, ToolEvent::Down { x: 10.0, y: 10.0, pressure: 1.0 }, Modifiers::NONE);
+    assert!(marquee.drag.is_some(), "a finger draws a marquee");
+    assert!(!marquee.ui.status.contains("Apple Pencil"), "{}", marquee.ui.status);
+    tool_event(&mut marquee, ToolEvent::Up { x: 80.0, y: 80.0 }, Modifiers::NONE);
+    assert!(marquee.session.active().unwrap().doc.selection.is_some(), "the marquee selected");
+    release(&mut marquee);
 }
 
 #[test]

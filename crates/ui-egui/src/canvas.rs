@@ -35,6 +35,7 @@ mod paint;
 pub mod paint_mouse;
 pub mod patch_preview;
 pub mod pattern_preview;
+pub(crate) mod preview_degrade;
 pub mod pixel_grid;
 pub mod quick_pick;
 pub mod rotate_view;

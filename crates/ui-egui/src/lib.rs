@@ -524,6 +524,9 @@ pub struct PhotocraftApp {
     /// Live filter preview (proxy document with the filter applied).
     pub(crate) guide_edit: Option<guide_edit::Draft>,
     pub(crate) filter_preview: Option<filter_dialog::FilterPreview>,
+    /// Adaptive coarsening of the live filter preview, from measured preview frame times: a
+    /// weak device keeps its drags alive and refines once the parameters settle.
+    pub(crate) preview_degrade: canvas::preview_degrade::PreviewDegrade,
     pub(crate) smart_filter_targets: smart_filter_dialog::Targets,
     #[cfg(not(target_arch = "wasm32"))]
     filter_preview_worker: crate::dialogs::filter_preview_worker::Worker,

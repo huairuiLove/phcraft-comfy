@@ -18,10 +18,17 @@ use super::{Document, LayerContent, PhotocraftApp};
 /// flipped mid-session (a shell save during `actions.play`): a factor that followed it would change
 /// [`crate::filter_dialog::FilterPreviewKey`] under a finished preview and recompute it inline,
 /// the very stall this avoids.
+///
+/// On a device too slow to keep that up (a phone at 100 % on a camera photo), the adaptive
+/// factor ([`super::preview_degrade`]) coarsens the preview while frames measure slow and
+/// refines back as the parameters settle; only the in-drag fidelity trades away.
 pub(crate) fn filter_preview_factor(app: &PhotocraftApp, doc: &Document, cmd: &str, params: &serde_json::Value) -> u32 {
     // A smart filter edit re-renders the whole stack: every stage constrains the factor.
     let k = crate::filter_dialog::smart_preview_factor(doc, cmd, params, crate::proxy::preview_factor(doc, crate::proxy::reduced_previews(app)));
-    if cfg!(target_arch = "wasm32") { k } else { crate::proxy::view_factor(k, app.current_zoom()) }
+    let k = if cfg!(target_arch = "wasm32") { k } else { crate::proxy::view_factor(k, app.current_zoom()) };
+    // The adaptive factor coarsens only what scales: a filter whose features don't (a fixed
+    // kernel, a pixel-sized cell) keeps its full-resolution preview however slow the device.
+    if crate::filter_dialog::full_resolution_preview(cmd, params) { k } else { app.preview_degrade.factor(k, doc.size.area()) }
 }
 
 /// Live preview for an open filter dialog: run the filter on the proxy and upload it. With
@@ -81,7 +88,17 @@ pub(crate) fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize, ctx: &e
             match computed {
                 // The dialog still holds these exact parameters. Publish as before, including an
                 // empty result: that is how a filter which no longer applies clears the canvas.
-                Ok(computed) if finished == request => publish_filter_preview(app, idx, finished, computed.result, computed.ms),
+                Ok(computed) if finished == request => {
+                    let had_result = computed.result.is_some();
+                    let ms = computed.ms;
+                    publish_filter_preview(app, idx, finished, computed.result, ms);
+                    // The dialog's exact value: the parameters have settled. Refine one step; the
+                    // next frame's request rebuilds at the finer factor and the worker recomputes
+                    // while this frame stays up.
+                    if had_result {
+                        app.preview_degrade.settled();
+                    }
+                }
                 // Mid-drag, a frame for the value the pointer has just left is what makes the
                 // canvas follow the drag. Three things have to hold for it: it belongs to this
                 // preview (at any proxy factor: it is drawn at its own, and a radius drag can move
@@ -93,7 +110,11 @@ pub(crate) fn ensure_filter_preview(app: &mut PhotocraftApp, idx: usize, ctx: &e
                         && computed.result.is_some()
                         && !app.filter_preview.as_ref().is_some_and(|p| p.key == request) =>
                 {
-                    publish_filter_preview(app, idx, finished, computed.result, computed.ms);
+                    let ms = computed.ms;
+                    publish_filter_preview(app, idx, finished, computed.result, ms);
+                    // A slow frame under a moving pointer coarsens the next, keeping the drag
+                    // alive on a weak device; a fast one changes nothing until it settles.
+                    app.preview_degrade.moving(ms);
                 }
                 Ok(_) => {}
                 // Errors stay on the exact request: a value the pointer has already dragged past

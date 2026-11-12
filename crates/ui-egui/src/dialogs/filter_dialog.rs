@@ -247,7 +247,7 @@ const FULL_RESOLUTION_PREVIEW: &[&str] = &[
 /// Whether `command` with `params` previews at full resolution: [`FULL_RESOLUTION_PREVIEW`], every
 /// Filter Gallery filter (its strokes, grain and textures are sized in pixels; the settings are
 /// abstract levels, not lengths) and the dithered colour-mode conversions (Indexed Color, Bitmap).
-fn full_resolution_preview(command: &str, params: &Value) -> bool {
+pub(crate) fn full_resolution_preview(command: &str, params: &Value) -> bool {
     let choice = |key: &str| params.get(key).and_then(Value::as_str);
     FULL_RESOLUTION_PREVIEW.contains(&command)
         || command.starts_with("filter.gallery.")

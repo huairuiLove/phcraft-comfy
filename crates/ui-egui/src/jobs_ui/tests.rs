@@ -190,6 +190,50 @@ fn filters_from_the_ui_run_in_the_background() {
     assert_eq!(h.state().ui.status, "Gaussian Blur");
 }
 
+/// The job a filter starts is the job in view from the moment it starts — the status-bar readout
+/// picks it there and the modal progress dialog finds it through the active document — so a slow
+/// device shows progress instead of looking frozen after OK.
+#[test]
+fn a_filter_job_is_in_view_from_the_moment_it_starts() {
+    let mut h = app_harness();
+    let r = h.state_mut().run("filter.blur.gaussianBlur", json!({"radius": 12})).unwrap();
+    assert_eq!(r["pending"], true, "{r}");
+    let j = crate::jobs_ui::job_in_view(h.state()).expect("the blur is the job in view");
+    assert_eq!(j.label, "Gaussian Blur");
+    assert!(j.document.is_some(), "it locks the active document, so the progress dialog can find it");
+    assert!(crate::jobs_ui::keep_polling(h.state(), &h.ctx), "frames keep coming while it runs");
+    let t = Instant::now();
+    while h.state().session.has_jobs() && t.elapsed() < Duration::from_secs(30) {
+        h.step();
+    }
+    h.run_steps(2);
+}
+
+/// On the touch UI the progress dialog carries no Esc hint (no keyboard) and its Cancel is the
+/// taller target a finger needs; on the pointer UI the hint stays.
+#[test]
+fn the_progress_dialog_is_touch_friendly() {
+    for touch in [false, true] {
+        let mut h = app_harness();
+        h.state_mut().run("prefs.set", json!({"path": "interface.touchUi", "value": touch})).unwrap();
+        let gate = Arc::new(AtomicBool::new(false));
+        slow_job(h.state_mut(), &gate);
+        // The dialog appears after its delay; step real frames until then (60 s ceiling).
+        let t = Instant::now();
+        while h.query_by_label("Cancel").is_none() {
+            assert!(t.elapsed() < Duration::from_secs(60), "touch {touch}: the dialog never appeared");
+            h.step();
+        }
+        assert_eq!(h.query_by_label("Esc to cancel").is_some(), !touch, "touch {touch}");
+        gate.store(true, Ordering::Relaxed);
+        let t = Instant::now();
+        while h.state().session.has_jobs() && t.elapsed() < Duration::from_secs(30) {
+            h.step();
+        }
+        h.run_steps(2);
+    }
+}
+
 #[test]
 fn control_requests_wait_for_jobs_unless_asked_not_to() {
     let mut h = app_harness();
