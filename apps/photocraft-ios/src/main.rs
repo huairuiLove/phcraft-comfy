@@ -9,7 +9,7 @@ use photocraft_codecs::{ChannelLayout, EncodeOptions, Image};
 use photocraft_doc::Document;
 use photocraft_ui_egui::theme::ThemeKind;
 
-/// The last tap's received position, painted as a crosshair under `PHOTOCRAFT_DEBUG_IOS`.
+// The last tap's received position, painted as a crosshair under `PHOTOCRAFT_DEBUG_IOS`.
 thread_local! {
     static LAST_TAP: std::cell::RefCell<Option<egui::Pos2>> = const { std::cell::RefCell::new(None) };
 }
@@ -19,6 +19,7 @@ use objc2_ui_kit::UICoordinateSpace;
 
 // Unconditional: the services() below references it on every host (clippy, tests); the
 // extern "C" pc_* symbols only link on iOS, where the ObjC file is compiled in.
+mod clipboard;
 mod long_press;
 mod picker;
 // Unconditional too: the transport links everywhere and its tests run on the host.
@@ -159,6 +160,9 @@ impl IosShell {
             objc2_ui_kit::UIApplication::sharedApplication(mtm).setIdleTimerDisabled(true);
         }
         PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::Pro);
+        // The copy side of the OS clipboard bridge (src/clipboard.rs): the app's text copies
+        // reach the system pasteboard, which egui-winit cannot do on iOS.
+        cc.egui_ctx.add_plugin(photocraft_ui_egui::system_clipboard::CopySync::new(clipboard::bridge()));
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services());
         // Testing aid (a launcher sets no CLI args for an iPad app): open a document at start,
         // to reproduce the canvas states a reviewer sees.
@@ -395,6 +399,14 @@ fn services() -> Services {
         // not through a ComfyUI server: the endpoint, model and key are Preferences ▸ Integrations
         // (editable in the generation panel), and results persist in the container like the
         // desktop's Generations folder, so the shelf survives a relaunch.
+        // The OS text clipboard bridge (src/clipboard.rs): paste reads UIPasteboard, so text
+        // copied in other apps pastes; copies mirror out through the CopySync plugin.
+        system_clipboard: Some(clipboard::bridge()),
+        // The photo album (PHPicker through src/picker.rs): Place asks album-or-files first.
+        photo_album: Some(Box::new(|request, _parent, reply| {
+            let multiple = matches!(request, FileDialogRequest::Open { multiple: true, .. });
+            picker::photos(multiple, reply);
+        })),
         comfy_transport: Some(api_gen::transport()),
         comfy_image_api: true,
         comfy_generations_dir: app_support_dir().map(|dir| dir.join("Generations")),

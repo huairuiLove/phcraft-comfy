@@ -49,11 +49,13 @@ pub mod monitor_status;
 pub mod notices;
 pub mod os_window;
 pub mod panels;
+pub mod place_source;
 pub mod preset_files_ui;
 pub mod proxy;
 pub mod render_path;
 pub mod screenshot;
 pub mod state;
+pub mod system_clipboard;
 pub mod texel_guard;
 pub mod theme;
 pub use titlebar::{Caption, CaptionFamily, CaptionIcon, CaptionIcons, CaptionStyle, RenderIconFn};
@@ -764,6 +766,9 @@ impl SyntheticTarget {
 
 #[cfg(test)]
 mod artboard_add_mode_tests;
+
+#[cfg(test)]
+mod place_source_tests;
 #[cfg(test)]
 mod shape_bounds_box_tests;
 

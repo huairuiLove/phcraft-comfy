@@ -54,7 +54,7 @@ objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSLocale", "NSString"] }
 # Idle-timer disable: a painting app keeps the display on while in front (the OS auto-locks an
 # idle iPad after two minutes, which read as the screen "going black"). Safe UIKit calls only.
-objc2-ui-kit = { version = "=0.3.2", default-features = false, features = ["std", "UIApplication", "UIScreen", "UIScene", "UISceneDefinitions", "UIView", "UIWindowScene"] }
+objc2-ui-kit = { version = "=0.3.2", default-features = false, features = ["std", "UIApplication", "UIScreen", "UIScene", "UISceneDefinitions", "UIView", "UIWindowScene", "UIPasteboard"] }
 
 [build-dependencies]
 # Compiles the ObjC scene delegate (ios/PCSceneDelegate.m) into the binary on iOS targets.

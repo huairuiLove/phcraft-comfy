@@ -113,12 +113,6 @@ pub(crate) fn copy_selection(app: &PhotocraftApp, ctx: &egui::Context) -> Option
     Some([a, b])
 }
 
-/// Edit > Paste during a type edit: ask the window for the clipboard text, which arrives as a
-/// Paste event next frame and replaces the selection there (like ⌘V).
-pub(crate) fn request_paste(ctx: &egui::Context) {
-    ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-}
-
 /// Select > All during a type edit selects every character (like ⌘A).
 pub(crate) fn select_all(app: &mut PhotocraftApp) {
     let Some(n) = app.ui.text_edit.as_ref().and_then(|ed| current_text(app, LayerId(ed.layer))).map(|t| t.chars().count()) else { return };

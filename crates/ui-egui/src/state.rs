@@ -253,6 +253,10 @@ pub struct UiState {
     /// Free Transform session, if any.
     #[serde(default)]
     pub transform: Option<TransformSession>,
+    /// A Place waiting on its source choice (album or files; `place_source.rs`). Only set on a
+    /// device with a photo album service; transient, never restored.
+    #[serde(default, skip_deserializing)]
+    pub place_source: Option<crate::place_source::Ask>,
     /// The options bar's Maintain Aspect Ratio link is off: W/H change on their own, and handle
     /// drags stretch freely (⇧ keeps the proportions), as in Photoshop (#4174).
     #[serde(default)]
@@ -552,6 +556,7 @@ impl Default for UiState {
             caret_blink_time: 0.0,
             text_edit_return_tool: None,
             type_transform: None,
+place_source: None,
             type_transform_pivot: None,
             cam_transform: None,
             transform: None,

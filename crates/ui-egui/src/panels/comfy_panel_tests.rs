@@ -118,3 +118,35 @@ fn image_api_backend_lists_and_runs_the_api_workflow() {
     let calls = seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     assert!(!calls.is_empty() && calls.iter().all(|api| *api), "only Image API calls happened: {calls:?}");
 }
+
+/// A paste into the connection fields (Endpoint, Model, Key) commits without Enter: on a touch
+/// device there is no Enter between a paste and the next tap, and the fields used to discard
+/// what they were holding. The paste is the OS-clipboard bridge's delivery
+/// (see `system_clipboard`).
+#[test]
+fn a_paste_into_the_image_api_fields_commits_without_enter() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut app = fresh_app();
+    app.session.comfy.image_api = true;
+    app.session.prefs.edit(|p| p.integrations.image_api_base = "old-endpoint".into());
+    app.ui.panels.comfy = true;
+    app.comfy_queue.check = Some("ComfyUI 0.44".into());
+    let mut h = harness(app);
+    h.run_steps(6);
+    // The Endpoint field, told apart from Model and Key by its current value.
+    let endpoint = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .into_iter()
+        .find(|n| n.value().as_deref() == Some("old-endpoint"))
+        .expect("the Endpoint field is drawn");
+    endpoint.focus();
+    h.run_steps(1);
+    // Select all first, as a user replacing the whole endpoint would.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(1);
+    h.event(egui::Event::Paste("https://ipad.local/api".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().session.prefs().integrations.image_api_base, "https://ipad.local/api", "the paste committed");
+    assert_eq!(h.state().comfy_queue.check, None, "and the connection check was reset");
+}

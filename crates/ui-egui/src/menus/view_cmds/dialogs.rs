@@ -356,19 +356,16 @@ pub(super) fn front(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, para
                 Err(e) => return Some(Err(e)),
             };
             let linked = id == "file.placeLinked";
+            // On a device with a photo album (the iPad shell), ask where to read from — album
+            // or files — before any picker opens (place_source.rs). Elsewhere, straight to Files.
+            if app.services.photo_album.is_some() {
+                app.ui.place_source = Some(crate::place_source::Ask { linked, doc });
+                ctx.request_repaint();
+                return Some(Ok(json!({ "fileDialog": "open" })));
+            }
             let ctx = ctx.clone();
             Some(app.pick_file_bytes(move |app, name, bytes| {
-                if app.ui.transform.is_some() {
-                    return Err("Commit or cancel the transform first".into());
-                }
-                app.refocus(doc)?;
-                let linked = linked.then(|| name.clone());
-                let result = app.place_bytes(&name, bytes, linked)?;
-                // In the background, Free Transform starts when the layer has landed.
-                if result.get("frame").and_then(Value::as_u64).is_none() && !crate::jobs_ui::track_place(app, &name, &result) {
-                    crate::transform_tool::begin_placed(app, &ctx)?;
-                }
-                Ok(result)
+                crate::place_source::place_picked(app, &name, bytes, linked, doc, &ctx)
             }))
         }
         "layer.smartObjects.replaceContents" => {

@@ -443,10 +443,15 @@ fn connection(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let mut url = app.session.prefs().integrations.comfy_url.clone();
     ui.horizontal(|ui| {
         ui.label("URL");
-        let r = egui::TextEdit::singleline(&mut url).desired_width(ui.available_width() - 70.0).show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        // Every change commits (Enter too): on a touch device there is no Enter between a
+        // paste and the Check tap, and the field otherwise discarded what it was holding.
+        let commit = |app: &mut PhotocraftApp, url: &str| {
             app.session.prefs.edit(|p| p.integrations.comfy_url = url.trim().trim_end_matches('/').to_string());
             app.comfy_queue.check = None;
+        };
+        let r = egui::TextEdit::singleline(&mut url).desired_width(ui.available_width() - 70.0).show(ui);
+        if r.response.changed() || (r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+            commit(app, &url);
         }
         if ui.button("Check").clicked() {
             match app.run("ai.comfyui.check", json!({})) {
@@ -482,22 +487,23 @@ fn connection_api(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     };
     ui.horizontal(|ui| {
         ui.label("Endpoint");
+        // Commits on every change, like the URL field (see `connection`).
         let r = egui::TextEdit::singleline(&mut base).desired_width(ui.available_width() - 70.0).hint_text("https://api.example.com").show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if r.response.changed() || (r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
             commit(app, &base, &model, &key);
         }
     });
     ui.horizontal(|ui| {
         ui.label("Model");
         let r = egui::TextEdit::singleline(&mut model).desired_width(ui.available_width() - 70.0).hint_text("gpt-image-2").show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if r.response.changed() || (r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
             commit(app, &base, &model, &key);
         }
     });
     ui.horizontal(|ui| {
         ui.label("Key");
         let r = egui::TextEdit::singleline(&mut key).password(true).desired_width(ui.available_width() - 70.0).show(ui);
-        if r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if r.response.changed() || (r.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
             commit(app, &base, &model, &key);
         }
         if ui.button("Check").clicked() {

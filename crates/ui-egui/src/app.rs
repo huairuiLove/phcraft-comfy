@@ -4,8 +4,8 @@ use super::{
     brush_picker, camera_raw_ui, canvas, comfy_panel, dds_options_ui, delete_layer_prompt, dialogs, discard_ui, distort_ui, dock, field_wheel, file_open, gpu_canvas,
     gpu_status, gradient_ui, histogram_panel, i18n, jobs_ui, jpeg_options_ui, json, kys_import, last_brush, layers_panel_ui, mask_thumbs_ui, mask_trash_prompt,
     monitor_status, native_menu, notices, open_prompt, paint_mouse, palette, panel_docking, panels, prefs_ui, preset_files_ui, preset_panels, rasterize_prompt,
-    screen_picker, shape_stroke_ui, shortcuts, single_line_drag, smart_svg_ui, state, stroke_trace, stylus, targa_options_ui, text_field_menu, theme,
-    tiff_options_ui, timeline_ui, titlebar, tool_cursor, tool_memory, transform_tool, type_panels_ui, type_tool, type_transform, updates_ui, vector_ui,
+    screen_picker, shape_stroke_ui, shortcuts, single_line_drag, smart_svg_ui, state, stroke_trace, stylus, system_clipboard, targa_options_ui, text_field_menu,
+    theme, tiff_options_ui, timeline_ui, titlebar, tool_cursor, tool_memory, transform_tool, type_panels_ui, type_tool, type_transform, updates_ui, vector_ui,
     view_cmds, wheel_nav, wide_angle_ui, widgets, work_area, workspace_ui,
 };
 
@@ -266,8 +266,15 @@ impl eframe::App for PhotocraftApp {
         // While a text field of a floating panel's own window has the keyboard, the dock area
         // hands that window the text keys in this input and converts them there.
         if craft_ui::docking::typing_window(ctx).is_none() {
+            // ⌘V in a focused field reads the OS clipboard through the shell's bridge where
+            // egui-winit has none (iPadOS, Android), before the window's paste path below.
+            if let Some(bridge) = self.services.system_clipboard.as_ref() {
+                system_clipboard::take_paste_key(bridge, ctx, raw_input);
+            }
             shortcuts::clipboard_keys(ctx, ctx.text_edit_focused() || self.ui.text_edit.is_some(), raw_input);
         }
+        // A paste the OS clipboard bridge read last frame, delivered to the focused field.
+        system_clipboard::deliver_pending(ctx, raw_input);
         // Windows precision touchpads and some Linux Wayland compositors send pinches
         // as fractional Ctrl + wheel rather than a native Zoom event (#4566).
         // Leave Ctrl+whole-notch mouse scrolling alone, and honour the pinch preference.

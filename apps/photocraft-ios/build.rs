@@ -24,5 +24,8 @@ fn main() {
         // unreferenced; force it in — the class must exist at launch for the Info.plist scene
         // manifest to instantiate.
         println!("cargo:rustc-link-arg-bins=-Wl,-force_load,{out}/libpcscenedelegate.a");
+        // PHPicker (the album picker in PCDocumentPicker.m) lives in PhotosUI, which nothing
+        // else in the egui stack links; the .m is compiled without modules, so no auto-link.
+        println!("cargo:rustc-link-lib=framework=PhotosUI");
     }
 }

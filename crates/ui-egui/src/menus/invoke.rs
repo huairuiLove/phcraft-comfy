@@ -619,7 +619,9 @@ fn invoke_type_command(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, p
             Some(Ok(Value::Null))
         }
         "edit.paste" if app.ui.text_edit.is_some() => {
-            crate::type_tool::request_paste(ctx);
+            // The OS clipboard bridge reads the pasteboard itself where egui-winit has none
+            // (iPadOS, Android); without one this is the window's paste request, as ⌘V.
+            crate::system_clipboard::request_paste(app.services.system_clipboard.as_ref(), ctx);
             Some(Ok(Value::Null))
         }
         "select.all" if app.ui.text_edit.is_some() => {

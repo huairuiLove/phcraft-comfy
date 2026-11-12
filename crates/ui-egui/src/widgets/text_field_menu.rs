@@ -202,14 +202,16 @@ fn enabled(open: &Open, action: Action) -> bool {
 
 /// Draw the open menu and do the item chosen in it. The app calls this first thing in a pass,
 /// before any text field is drawn, so the field handles the chosen item in the same pass.
-pub fn show(ctx: &Context) {
+/// `clipboard` is the shell's OS-clipboard bridge, where the host has one (iPadOS, Android);
+/// Paste reads it instead of the window, which has no OS clipboard there.
+pub fn show(ctx: &Context, clipboard: Option<&crate::system_clipboard::SystemClipboard>) {
     let mut state = State::load(ctx);
     let Some(open) = state.open else { return };
     if let Some(action) = draw(ctx, &open) {
         // The field keeps its focus through this pass's click; the rule comes back next pass.
         state.close();
         state.store(ctx);
-        apply(ctx, open.field, action);
+        apply(ctx, open.field, action, clipboard);
     }
 }
 
@@ -253,7 +255,7 @@ fn draw(ctx: &Context, open: &Open) -> Option<Action> {
 
 /// Do `action` in `field`: give it its focus back and the input that does the same from the
 /// keyboard, which it handles later in this pass.
-fn apply(ctx: &Context, field: Id, action: Action) {
+fn apply(ctx: &Context, field: Id, action: Action, clipboard: Option<&crate::system_clipboard::SystemClipboard>) {
     ctx.memory_mut(|m| m.request_focus(field));
     let key = |key, modifiers| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers };
     let event = match action {
@@ -263,8 +265,9 @@ fn apply(ctx: &Context, field: Id, action: Action) {
         Action::Delete => key(Key::Delete, Modifiers::NONE),
         Action::SelectAll => key(Key::A, Modifiers::COMMAND),
         Action::Paste => {
-            // The clipboard text arrives as a Paste event next pass, as for ⌘V in a field.
-            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+            // The clipboard text arrives as a Paste event next pass, as for ⌘V in a field —
+            // read from the OS pasteboard where the shell gave a bridge, else from the window.
+            crate::system_clipboard::request_paste(clipboard, ctx);
             return;
         }
     };
@@ -284,13 +287,13 @@ mod tests {
 
     /// The app with a layer "Alpha" being renamed (its name selected, as a rename starts) and the
     /// Rectangular Marquee, whose canvas has a context menu of its own.
-    fn renaming() -> (Harness<'static, PhotocraftApp>, Id) {
+    fn renaming_with(services: crate::Services) -> (Harness<'static, PhotocraftApp>, Id) {
         let mut s = photocraft_engine::Session::new();
         s.execute("file.new", json!({"width": 64, "height": 48})).unwrap();
         let layer = s.execute("layer.new.layer", json!({"name": "Alpha"})).unwrap()["layer"].as_u64().unwrap();
         let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).with_max_steps(64).build_eframe(move |cc| {
             PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
-            PhotocraftApp::new(s, crate::Services::default())
+            PhotocraftApp::new(s, services)
         });
         h.state_mut().ui.tool = crate::state::Tool::RectMarquee;
         h.run_steps(8);
@@ -298,6 +301,10 @@ mod tests {
         assert!(start_rename(&ctx, layer, "Alpha").is_none());
         h.run_steps(4);
         (h, Id::unique(("layer-rename-field", layer)))
+    }
+
+    fn renaming() -> (Harness<'static, PhotocraftApp>, Id) {
+        renaming_with(crate::Services::default())
     }
 
     fn button(h: &mut Harness<'_, PhotocraftApp>, at: Pos2, button: PointerButton) {
@@ -376,5 +383,41 @@ mod tests {
         assert_eq!(choose(&mut h, "Cut").as_deref(), Some("Alpha"), "Cut copies the selected text");
         assert_eq!(text(&h), "", "and removes it from the field");
         assert!(h.ctx.memory(|m| m.has_focus(field)), "the rename is still being typed");
+    }
+
+    /// With the shell's OS-clipboard bridge set (iPadOS, Android), the menu's Paste reads the OS
+    /// pasteboard: the text it returns becomes the paste the next frame delivers, and the app's
+    /// own clipboard is brought in step (the CopyText output). Without a bridge nothing changes —
+    /// the window is asked instead, as on the desktop.
+    #[test]
+    fn paste_in_the_menu_reads_the_os_clipboard_bridge() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let read = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&read);
+        let services = crate::Services {
+            system_clipboard: Some(crate::system_clipboard::SystemClipboard {
+                get: Some(Arc::new(move || {
+                    seen.store(true, Ordering::Relaxed);
+                    Some("from Safari".to_string())
+                })),
+                set: Some(Arc::new(|_| {})),
+            }),
+            ..Default::default()
+        };
+        let (mut h, field) = renaming_with(services);
+        right_click(&mut h, field);
+        // Select All first, so the paste replaces the whole name.
+        assert_eq!(choose(&mut h, "Select All"), None);
+        right_click(&mut h, field);
+        // Choosing Paste mirrors the OS clipboard's text into the app clipboard (that CopyText
+        // is what `choose` captures) — proof the bridge was read, not the window asked.
+        assert_eq!(choose(&mut h, "Paste").as_deref(), Some("from Safari"));
+        assert!(read.load(Ordering::Relaxed), "the OS clipboard was read");
+        // And the paste the next frame delivers to the still-focused field is that text.
+        let mut raw = egui::RawInput::default();
+        crate::system_clipboard::deliver_pending(&h.ctx, &mut raw);
+        assert_eq!(raw.events, vec![egui::Event::Paste("from Safari".into())]);
     }
 }

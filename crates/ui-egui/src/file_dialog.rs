@@ -87,6 +87,10 @@ type SavedPath = Box<dyn Fn(&PhotocraftApp, &str) -> String>;
 pub(crate) struct Pending {
     /// Not shown yet: it is shown at the end of the frame, which has the window to parent it to.
     request: Option<FileDialogRequest>,
+    /// The request goes to the photo album picker ([`Services::photo_album`]) instead of the
+    /// file dialog: Place on a device with an album asks where to read from first
+    /// (`place_source.rs`); the answer and continuation are the same.
+    album: bool,
     answer: Option<Receiver<Option<FileDialogAnswer>>>,
     then: Then,
     /// For a save dialog, the path the save writes to for the dialog's answer.
@@ -130,8 +134,40 @@ impl PhotocraftApp {
             Some(FileDialogAnswer::Unavailable(why)) => Err(why),
             Some(a) => then(app, a),
         });
-        self.file_dialog = Some(Pending { request: Some(request), answer: None, then, saved_path: None, held: None });
+        self.file_dialog = Some(Pending { request: Some(request), album: false, answer: None, then, saved_path: None, held: None });
         Ok(json!({ "fileDialog": kind }))
+    }
+
+    /// Same asynchronous picker as [`Self::pick_file_bytes`], but the photo album
+    /// ([`Services::photo_album`]) answers: the system photo picker's images, read as
+    /// (name, bytes) like a Files choice. `Err` without the service.
+    pub(crate) fn pick_album_bytes(
+        &mut self,
+        then: impl FnOnce(&mut Self, String, Vec<u8>) -> Result<Value, String> + 'static,
+    ) -> Result<Value, String> {
+        if self.services.photo_album.is_none() {
+            return Err(CANCELLED.into());
+        }
+        if self.file_dialog.is_some() {
+            return Err("a file dialog is already open".into());
+        }
+        let then: Then = Box::new(move |app, answer| match answer {
+            None => Err(CANCELLED.into()),
+            Some(FileDialogAnswer::Unavailable(why)) => Err(why),
+            Some(a) => {
+                let (name, bytes) = read_picked(a)?;
+                then(app, name, bytes)
+            }
+        });
+        self.file_dialog = Some(Pending {
+            request: Some(FileDialogRequest::Open { multiple: true, initial_dir: None, extensions: None }),
+            album: true,
+            answer: None,
+            then,
+            saved_path: None,
+            held: None,
+        });
+        Ok(json!({ "fileDialog": "album" }))
     }
 
     /// Ask the user to choose a folder, starting in the folder of the most recent file when known.
@@ -326,7 +362,8 @@ impl PhotocraftApp {
         if let Some(request) = p.request.take() {
             let (tx, rx) = mpsc::channel();
             p.answer = Some(rx);
-            if let Some(show) = self.services.file_dialog.as_mut() {
+            let show = if p.album { self.services.photo_album.as_mut() } else { self.services.file_dialog.as_mut() };
+            if let Some(show) = show {
                 show(request, parent, FileDialogReply { tx, ctx: ctx.clone() });
             }
         }
