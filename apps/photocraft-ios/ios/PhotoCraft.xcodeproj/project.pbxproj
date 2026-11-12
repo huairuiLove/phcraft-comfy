@@ -6,7 +6,12 @@
 	objectVersion = 56;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AA2C0001000000000000001C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA2C0001000000000000001B /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		AA2C0001000000000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = PhotoCraft/Assets.xcassets; sourceTree = "<group>"; };
 		AA2C0001000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = PhotoCraft/Info.plist; sourceTree = "<group>"; };
 		AA2C0001000000000000000D /* PhotoCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PhotoCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA2C00010000000000000012 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
@@ -35,6 +40,7 @@
 			isa = PBXGroup;
 			children = (
 				AA2C0001000000000000000C /* Info.plist */,
+				AA2C0001000000000000001B /* Assets.xcassets */,
 				AA2C00010000000000000011 /* PhotoCraft (Rust crate) */,
 				AA2C0001000000000000000B /* Products */,
 			);
@@ -79,6 +85,7 @@
 			buildPhases = (
 				AA2C0001000000000000000F /* Sources */,
 				AA2C00010000000000000010 /* Frameworks */,
+				AA2C0001000000000000001D /* Resources */,
 				AA2C00010000000000000009 /* Build the PhotoCraft binary with Cargo */,
 			);
 			buildRules = (
@@ -119,6 +126,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA2C0001000000000000001D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA2C0001000000000000001C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		AA2C00010000000000000009 /* Build the PhotoCraft binary with Cargo */ = {

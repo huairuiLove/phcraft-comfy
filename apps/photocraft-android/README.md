@@ -92,6 +92,11 @@ runs the same ABI). `PROFILE=debug` selects the Cargo profile. The sibling `../c
 checkout is picked up exactly like an iPadOS build: without it the build works, but CJK and other
 non-Latin interface text shows missing glyphs unless the device's Noto files are readable.
 
+The build also compiles `android/res` with aapt2: the manifest's launcher icon uses the
+mobile design from `assets/app-icon/photocomfy-mobile.svg`. Android 8+ uses adaptive
+background/foreground layers, preserving the mark under round and rounded-square masks.
+Regenerate platform exports with `python3 packaging/mobile-icons.py`.
+
 ## Install and share
 
 ```sh

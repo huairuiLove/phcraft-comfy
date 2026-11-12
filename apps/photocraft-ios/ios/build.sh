@@ -104,14 +104,15 @@ mkdir -p "$APP"
 # the output's timestamp, which is how Xcode sees it change.
 cp "$BIN" "$APP/$PRODUCT"
 echo "installed $(wc -c < "$APP/$PRODUCT" | tr -d ' ') bytes into $APP/$PRODUCT"
-# Standalone runs (simctl install) need the bundle metadata too; under Xcode the Info.plist
-# step provides it, so only fill in what's missing. The placeholders are Xcode build settings;
-# standalone they get the same values the target's settings carry.
-if [ ! -f "$APP/Info.plist" ]; then
+# Xcode compiles Assets.xcassets and merges its icon metadata in the Resources phase.
+# Standalone runs need the same assets and a fresh plist: keeping an old plist here would
+# silently leave a previously built bundle without its launcher icon.
+if [ -z "${XCODE_VERSION_ACTUAL:-}" ]; then
     sed -e "s/\$(EXECUTABLE_NAME)/$PRODUCT/" \
         -e "s/\$(PRODUCT_BUNDLE_IDENTIFIER)/ai.storyteller.photocraft.ios/" \
         -e "s/\$(MARKETING_VERSION)/0.20.1/" \
         -e "s/\$(CURRENT_PROJECT_VERSION)/1/" \
         "$(dirname "$0")/PhotoCraft/Info.plist" > "$APP/Info.plist"
     printf 'APPL????' > "$APP/PkgInfo"
+    sh "$(dirname "$0")/package-icons.sh" "$APP" "$PLATFORM"
 fi

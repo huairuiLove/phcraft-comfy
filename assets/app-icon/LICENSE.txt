@@ -11,3 +11,8 @@ under either of
 at your option.
 
 Regenerate the derived files with packaging/icons.sh.
+
+The original mobile vector design (photocomfy-mobile.svg) and its platform exports in
+apps/photocraft-ios/ios/PhotoCraft/Assets.xcassets/ and
+apps/photocraft-android/android/res/ are also licensed MIT OR Apache-2.0, at your option.
+Regenerate these exports with packaging/mobile-icons.py.

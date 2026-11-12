@@ -26,12 +26,17 @@ interface language and the CJK script choice) is read from `NSLocale` at startup
 ## What the Xcode project contains
 
 `ios/PhotoCraft.xcodeproj` looks nearly empty when you open it, and that is the design, not a
-broken project. It has one target, `PhotoCraft`, with one build phase, "Build the PhotoCraft
+broken project. It has one target, `PhotoCraft`, with a Cargo build phase, "Build the PhotoCraft
 binary with Cargo", which runs `ios/build.sh` (a `cargo build` for the chosen iOS target) and
 copies the resulting binary into `PhotoCraft.app`; Xcode signs the finished bundle. There are no
 Swift or Objective-C sources in the target: the app is the Rust crate next to `ios/`, and the two
 small ObjC bridges (`PCSceneDelegate.m`, `PCDocumentPicker.m`) are compiled by `build.rs` with
 `cc`.
+
+The Resources phase compiles `PhotoCraft/Assets.xcassets`, including the mobile AppIcon.
+Standalone `ios/build.sh` builds compile the same catalog with `ios/package-icons.sh`
+and merge actool's generated icon metadata into Info.plist. Platform exports come from
+`assets/app-icon/photocomfy-mobile.svg` via `packaging/mobile-icons.py`.
 
 So the navigator holds references, not the build: `Info.plist`, `Products/PhotoCraft.app`, and
 the "PhotoCraft (Rust crate)" group with the files the cargo phase builds. Edit any of them in

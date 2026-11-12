@@ -16,16 +16,6 @@
 	<string>PhotoCraft</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
-	<key>CFBundleIcons</key>
-	<dict>
-		<key>CFBundlePrimaryIcon</key>
-		<dict>
-			<key>CFBundleIconFiles</key>
-			<array><string>AppIcon</string></array>
-			<key>CFBundleIconName</key>
-			<string>AppIcon</string>
-		</dict>
-	</dict>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
