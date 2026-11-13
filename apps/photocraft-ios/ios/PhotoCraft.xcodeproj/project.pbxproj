@@ -6,8 +6,13 @@
 	objectVersion = 56;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AA2C00010000000000000012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA2C0001000000000000000E /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		AA2C0001000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.info; name = Info.plist; path = PhotoCraft/Info.plist; sourceTree = "<group>"; };
+		AA2C0001000000000000000E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = PhotoCraft/Assets.xcassets; sourceTree = "<group>"; };
 		AA2C0001000000000000000D /* PhotoCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PhotoCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -25,6 +30,7 @@
 		AA2C0001000000000000000A /* ios */ = {
 			isa = PBXGroup;
 			children = (
+				AA2C0001000000000000000E /* Assets.xcassets */,
 				AA2C0001000000000000000C /* Info.plist */,
 				AA2C0001000000000000000B /* Products */,
 			);
@@ -47,6 +53,7 @@
 			buildPhases = (
 				AA2C0001000000000000000F /* Sources */,
 				AA2C00010000000000000010 /* Frameworks */,
+				AA2C00010000000000000011 /* Resources */,
 				AA2C00010000000000000009 /* Build the PhotoCraft binary with Cargo */,
 			);
 			buildRules = (
@@ -87,6 +94,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA2C00010000000000000011 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA2C00010000000000000012 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		AA2C00010000000000000009 /* Build the PhotoCraft binary with Cargo */ = {
@@ -175,9 +193,10 @@
 		AA2C00010000000000000007 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
-				DEVELOPMENT_TEAM = 42H6NLN7CR;
+				DEVELOPMENT_TEAM = V9F6BSTSND;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PhotoCraft/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -188,6 +207,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.20.1;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.photocraft.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -199,9 +219,10 @@
 		AA2C00010000000000000008 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
-				DEVELOPMENT_TEAM = 42H6NLN7CR;
+				DEVELOPMENT_TEAM = V9F6BSTSND;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PhotoCraft/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -212,6 +233,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.20.1;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.photocraft.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
