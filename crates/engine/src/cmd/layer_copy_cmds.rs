@@ -170,6 +170,25 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
     if ids.is_empty() {
         return Err(bad("no layers to copy"));
     }
+    // A frame of the destination the copy becomes the content of (dropped on it, as on the source
+    // document's canvas): one image layer, replacing what the frame held.
+    let frame = match p.get("frame") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(LayerId(v.as_u64().ok_or_else(|| bad("`frame` must be a layer id"))?)),
+    };
+    if let Some(f) = frame {
+        let [one] = ids.as_slice() else {
+            return Err(bad("`frame` takes exactly one layer"));
+        };
+        let src_layer = sdoc.layer(*one).ok_or(EngineError::NoLayer(*one))?;
+        if !matches!(src_layer.content, LayerContent::Raster(_) | LayerContent::Smart(_)) {
+            return Err(bad("a frame takes a pixel or smart object layer"));
+        }
+        let to_layer = ddoc.layer(f).ok_or(EngineError::NoLayer(f))?;
+        if to_layer.frame.is_none() {
+            return Err(bad("`frame` must name a frame of the destination"));
+        }
+    }
     for (doc, role) in [(&sdoc, "source"), (&ddoc, "destination")] {
         if !layered(doc.mode) {
             return Err(EngineError::Other(format!("layers can't be copied with a {:?} {role} document", doc.mode)));
@@ -220,7 +239,13 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
     translate_copies(&mut copies, &ddoc, dx, dy);
     let patterns: Vec<_> = sdoc.patterns.iter().filter(|pat| !ddoc.patterns.iter().any(|d| d.id == pat.id)).cloned().collect();
     s.set_active(dest);
-    let label = if ids.len() == 1 { "Duplicate Layer" } else { "Duplicate Layers" };
+    let label = if frame.is_some() {
+        "Copy Layer to Frame"
+    } else if ids.len() == 1 {
+        "Duplicate Layer"
+    } else {
+        "Duplicate Layers"
+    };
     let edited = s.edit(label, |doc, active| {
         doc.patterns.extend(patterns);
         let mut above = *active;
@@ -233,7 +258,20 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
             above = Some(id);
             new.push(id);
         }
-        *active = above;
+        // A frame target: the single copy leaves the layer stack and becomes the frame's image,
+        // the way `layer.frame.setContent` moves a layer in (smart conversion included).
+        if let Some(frame) = frame {
+            let [id] = new.as_slice() else { return Err(bad("`frame` takes exactly one layer")) };
+            let l = doc.layer(*id).ok_or(EngineError::NoLayer(*id))?;
+            let mut child = if matches!(l.content, LayerContent::Smart(_)) { l.clone() } else { crate::smart_cmds::layer_to_smart(doc, l)? };
+            child.id = *id;
+            doc.remove(*id).ok_or(EngineError::NoLayer(*id))?;
+            crate::frame_cmds::put_content(doc, frame, child)?;
+            *active = Some(frame);
+            new = vec![*id];
+        } else {
+            *active = above;
+        }
         // Copied groups keep their own depth: repeated copies would otherwise nest without end.
         crate::layer_multi_cmds::check_group_depth(doc, "Copy Layers")?;
         Ok(new)
@@ -247,8 +285,15 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
         crate::type_cmds::note_typed_name(s, *id, &name);
     }
     let last = new.last().copied();
-    crate::layer_multi_cmds::reselect(s, new.clone(), last);
-    Ok(json!({"document": dest, "layers": new.iter().map(|l| l.0).collect::<Vec<_>>(), "offset": [dx, dy]}))
+    // A frame target selects the frame, its image inside (as `layer.frame.setContent` leaves it).
+    let picked = frame.map(|f| vec![f]).unwrap_or_else(|| new.clone());
+    let picked_last = frame.or(last);
+    crate::layer_multi_cmds::reselect(s, picked, picked_last);
+    let mut out = json!({"document": dest, "layers": new.iter().map(|l| l.0).collect::<Vec<_>>(), "offset": [dx, dy]});
+    if let Some(frame) = frame {
+        out["frame"] = json!(frame.0);
+    }
+    Ok(out)
 }
 
 /// `layer.duplicate` with `"document": "new"`: Photoshop's Duplicate Layer… ›
@@ -325,7 +370,7 @@ pub fn specs() -> Vec<CommandSpec> {
         label: "Copy Layers to Document",
         menu: &[],
         shortcut: None,
-        params: r##"{"document":index (destination),"layers":[id,…]?=the source's selected layers,"source":index?=active,"center":bool=false (centre on the destination's canvas),"at":[x,y]? (centre the copies on this point),"offset":[dx,dy]?=[0,0] (from their place in the source),"name":str? (one layer: the copy's name)}"##,
+        params: r##"{"document":index (destination),"layers":[id,…]?=the source's selected layers,"source":index?=active,"center":bool=false (centre on the destination's canvas),"at":[x,y]? (centre the copies on this point),"offset":[dx,dy]?=[0,0] (from their place in the source),"frame":id? (a frame of the destination: the one copied pixel/smart layer becomes its content, replacing the previous),"name":str? (one layer: the copy's name)} → {document,layers,offset,frame?}"##,
         enabled,
         run: copy_to_document,
         journal: true,

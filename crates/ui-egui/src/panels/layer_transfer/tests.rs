@@ -130,3 +130,30 @@ fn dropping_back_on_the_source_copies_nothing() {
     assert_eq!((docs[0].doc.layers.len(), docs[1].doc.layers.len()), (2, 1));
     assert_eq!(h.state().session.active_index(), Some(0));
 }
+
+/// Released over a frame of the destination, the dragged layer from the other document becomes
+/// that frame's content — not a sibling layer beside it (#589, frame drop).
+#[test]
+fn a_drag_from_another_document_released_on_a_frame_becomes_its_content() {
+    let (mut h, _) = harness();
+    // A 20×20 frame centred on dest-doc's 60×50 canvas, at (30, 25).
+    h.state_mut().session.set_active(1);
+    let r = h.state_mut().run("layer.new.frame", json!({"x": 20, "y": 15, "width": 20, "height": 20})).unwrap();
+    let frame = LayerId(r["layer"].as_u64().unwrap());
+    h.state_mut().session.set_active(0);
+    h.run_steps(2);
+    let row = h.get_by_role_and_label(Role::Button, "paint").rect().center();
+    let over_tab = tab(&h, "dest-doc");
+    let drop = h.state().last_canvas_rect.center();
+    drag_along(&mut h, &[row, over_tab, drop], Modifiers::NONE);
+    let st = h.state().session.active().unwrap();
+    assert_eq!(st.doc.name, "dest-doc");
+    let f = st.doc.layer(frame).unwrap();
+    let children = f.children().unwrap();
+    assert_eq!(children.len(), 1, "the copy is the frame's image: {f:?}");
+    assert_eq!(children[0].name, "paint");
+    assert!(matches!(children[0].content, photocraft_doc::LayerContent::Smart(_)), "framed as a smart object");
+    assert_eq!(st.active_layer, Some(frame), "the frame is selected");
+    assert_eq!(st.doc.layers.len(), 2, "nothing landed beside the frame (Background + frame only)");
+    assert_eq!(h.state().session.documents()[0].doc.layers.len(), 2, "the source keeps its layers");
+}

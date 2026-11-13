@@ -7,7 +7,8 @@
 //! a Layers panel drag centres the layers on it. With ⇧, or when released on the tab itself, they
 //! keep their place when both documents have the same pixel size and are centred otherwise
 //! (Photoshop's ⇧-drag). With Window › Arrange tiling several documents, releasing over another
-//! document's tile drops there.
+//! document's tile drops there. Released over a frame of the destination, a single dragged image
+//! becomes that frame's content (`"frame"` on `layer.copyToDocument`), as on the source canvas.
 //!
 //! A Move-tool drag starting inside a selection or moving a floating piece stays a move: Photoshop
 //! would copy just the selected pixels, which is not supported yet.
@@ -166,12 +167,24 @@ fn drop(app: &mut PhotocraftApp, ctx: &egui::Context, dest: usize, at: Option<[f
     let Some(to) = docs.get(dest).filter(|_| dest != src) else { return };
     let same_size = to.doc.size == docs[src].doc.size;
     let mut p = json!({"document": dest, "source": src, "layers": t.layers});
-    match at.filter(|_| !ctx.input(|i| i.modifiers.shift)) {
+    let drop_at = at.filter(|_| !ctx.input(|i| i.modifiers.shift));
+    match drop_at {
         Some(at) => match t.grab {
             Some(g) => p["offset"] = json!([(at[0] - g[0]).round(), (at[1] - g[1]).round()]),
             None => p["at"] = json!(at),
         },
         None => p["center"] = json!(!same_size),
+    }
+    // Released over one of the destination's frames (shown, so it is the active document): a
+    // single dragged image becomes that frame's content — the same drop as on the source
+    // document's canvas, straight from the other document.
+    if drop_at.is_some()
+        && app.session.active_index() == Some(dest)
+        && t.layers.len() == 1
+        && let Some(at) = drop_at
+        && let Some(frame) = crate::frame_tool::frame_at(app, at)
+    {
+        p["frame"] = json!(frame.0);
     }
     if let Err(e) = app.run("layer.copyToDocument", p) {
         app.ui.status = e;

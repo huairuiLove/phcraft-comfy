@@ -500,3 +500,59 @@ fn retargeting_type_survives_bad_resolutions() {
     crate::canvas_geom::retarget_type_resolution(&mut d, f32::MAX);
     assert!(size(&d).is_finite() && size(&d) > 0.0, "{}", size(&d));
 }
+
+/// `"frame"`: a copy dropped on a frame of the destination becomes its image — smart-converted,
+/// inside the frame (never a sibling), the frame selected, one history step, undo empties the
+/// frame again.
+#[test]
+fn a_copy_targeted_at_a_destination_frame_becomes_its_content() {
+    let (mut s, _paint) = two_docs(40, 30, 8);
+    s.set_active(1);
+    let frame = LayerId(s.execute("layer.new.frame", json!({"x": 20, "y": 15, "width": 20, "height": 20})).unwrap()["layer"].as_u64().unwrap());
+    s.set_active(0);
+    let (top, steps) = (doc(&s, 1).layers.len(), s.documents()[1].history.entries().len());
+    let r = s.execute("layer.copyToDocument", json!({"document": 1, "frame": frame.0, "at": [30.0, 25.0]})).unwrap();
+    assert_eq!(r["frame"], json!(frame.0));
+    let d = doc(&s, 1);
+    assert_eq!(d.layers.len(), top, "the copy is the frame's image, not a sibling");
+    let f = d.layer(frame).unwrap();
+    let children = f.children().unwrap();
+    assert_eq!(children.len(), 1, "one image inside the frame");
+    assert!(matches!(children[0].content, LayerContent::Smart(_)), "framed as a smart object");
+    assert_eq!(children[0].name, "paint");
+    assert_eq!(children[0].id, copied(&r));
+    assert_eq!(s.documents()[1].history.entries().len(), steps + 1, "one history step");
+    assert_eq!(doc(&s, 0).layers.len(), 2, "the source keeps its layers");
+    assert_eq!(s.active().and_then(|st| st.active_layer), Some(frame), "the frame is selected, as after Replace Frame Content");
+    assert!(s.undo());
+    assert!(doc(&s, 1).layer(frame).unwrap().children().unwrap().is_empty(), "undo empties the frame");
+    assert_eq!(doc(&s, 1).layers.len(), top);
+}
+
+/// `"frame"` refuses what a frame cannot take — more than one layer, a group, an id that is not a
+/// frame of the destination — without touching either document.
+#[test]
+fn frame_targets_refuse_what_a_frame_cannot_take() {
+    let (mut s, paint) = two_docs(40, 30, 8);
+    s.set_active(1);
+    let frame = LayerId(s.execute("layer.new.frame", json!({"x": 0, "y": 0, "width": 30, "height": 30})).unwrap()["layer"].as_u64().unwrap());
+    let plain = LayerId(s.execute("layer.new.layer", json!({"name": "plain"})).unwrap()["layer"].as_u64().unwrap());
+    s.set_active(0);
+    let second = LayerId(s.execute("layer.new.layer", json!({"name": "second"})).unwrap()["layer"].as_u64().unwrap());
+    s.execute("layer.select", json!({"layer": paint.0})).unwrap();
+    let group = LayerId(s.execute("layer.new.groupFromLayers", json!({})).unwrap()["layer"].as_u64().unwrap());
+    let (top, steps) = (doc(&s, 1).layers.len(), s.documents()[1].history.entries().len());
+    let src_top = doc(&s, 0).layers.len();
+    for p in [
+        json!({"document": 1, "layers": [paint.0, second.0], "frame": frame.0}),
+        json!({"document": 1, "layers": [group.0], "frame": frame.0}),
+        json!({"document": 1, "frame": plain.0}),
+        json!({"document": 1, "frame": "frame"}),
+    ] {
+        assert!(s.execute("layer.copyToDocument", p.clone()).is_err(), "{p}");
+    }
+    assert_eq!(doc(&s, 1).layers.len(), top, "the destination is unchanged");
+    assert!(doc(&s, 1).layer(frame).unwrap().children().unwrap().is_empty());
+    assert_eq!(s.documents()[1].history.entries().len(), steps, "no history written");
+    assert_eq!(doc(&s, 0).layers.len(), src_top, "the source is unchanged");
+}

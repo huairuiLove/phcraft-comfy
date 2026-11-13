@@ -551,3 +551,29 @@ fn fitting_content_moves_the_smart_filter_mask_with_the_image() {
     let LayerContent::Smart(sm) = &s.active().unwrap().doc.layer(child).unwrap().content else { panic!("smart") };
     assert_eq!(sm.filter_mask.as_ref().unwrap().surface.content_bounds(), Rect::new(4, 4, 24, 24));
 }
+
+/// A frame's image moves to another frame: `setContent` with the first frame's content — the
+/// same drag as from any other layer — empties the source frame and fills the target, keeping
+/// the image's identity and one history step.
+#[test]
+fn a_frames_image_moves_to_another_frame() {
+    let (mut s, a, _) = session();
+    let f1 = LayerId(s.execute("layer.new.frame", json!({"x": 0, "y": 0, "width": 40, "height": 30, "layer": a.0})).unwrap()["layer"].as_u64().unwrap());
+    let f2 = LayerId(s.execute("layer.new.frame", json!({"x": 40, "y": 30, "width": 40, "height": 30})).unwrap()["layer"].as_u64().unwrap());
+    let d = s.active().unwrap();
+    let image = d.doc.layer(f1).unwrap().children().unwrap()[0].id;
+    let before = crate::transform_cmds::transform_frame(&d.doc, d.doc.layer(image).unwrap());
+    let steps = s.active().unwrap().history.entries().len();
+    let r = s.execute("layer.frame.setContent", json!({"layer": f2.0, "content": image.0})).unwrap();
+    assert_eq!(r["content"], json!(image.0), "the image keeps its identity");
+    let d = s.active().unwrap();
+    assert!(d.doc.layer(f1).unwrap().children().unwrap().is_empty(), "the source frame is empty");
+    let moved = d.doc.layer(f2).unwrap().children().unwrap()[0].id;
+    assert_eq!(moved, image);
+    assert_eq!(crate::transform_cmds::transform_frame(&d.doc, d.doc.layer(image).unwrap()), before, "the image did not move or resize");
+    assert_eq!(d.history.entries().len(), steps + 1, "one history step");
+    assert!(s.undo());
+    let d = s.active().unwrap();
+    assert_eq!(d.doc.layer(f1).unwrap().children().unwrap()[0].id, image, "undo puts it back");
+    assert!(d.doc.layer(f2).unwrap().children().unwrap().is_empty());
+} 
