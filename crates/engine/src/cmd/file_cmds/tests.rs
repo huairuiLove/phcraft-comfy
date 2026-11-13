@@ -1959,6 +1959,32 @@ fn resize_image_during_place_preference_controls_the_fit() {
     assert!((r["scale"].as_f64().unwrap() - 50.0).abs() < 1e-9, "fitted on request: {r}");
 }
 
+/// A `.psd` placed into another PSD document (Place, a drop, an album pick): the source PSD is
+/// imported through the open path, embedded whole as a smart object, and renders from its own
+/// bytes — not from a flattened preview.
+#[test]
+fn placing_a_psd_file_into_another_psd_document() {
+    let mut src = Session::new();
+    src.execute("file.new", json!({"width": 20, "height": 10, "background": "#ff0000"})).unwrap();
+    let psd = photocraft_io::export(doc(&src), "src.psd", &photocraft_io::ExportOptions::default()).unwrap();
+    assert!(psd.bytes.starts_with(b"8BPS"), "a real PSD, not a preview");
+    // The bytes the way a pick or a drop delivers them: a name and contents, no path.
+    let mut s = session(100, 100, 8);
+    let r = place_bytes(&mut s, "src.psd", psd.bytes.clone(), None, &json!({})).unwrap();
+    assert_eq!(r["smartObject"], json!(true));
+    let d = s.active().unwrap();
+    let l = d.doc.layer(d.active_layer.unwrap()).unwrap();
+    assert_eq!(l.name, "src");
+    let LayerContent::Smart(so) = &l.content else { panic!("smart object expected") };
+    assert!(
+        matches!(&so.source, SmartSource::Embedded { bytes, .. } if **bytes == psd.bytes),
+        "the whole PSD is embedded"
+    );
+    // Fitted to the canvas width (20:10 → 100×50), centred vertically: rows 25..75 red.
+    assert!(composite(&s, 50, 50)[0] > 0.99 && composite(&s, 50, 50)[1] < 0.01);
+    assert!(composite(&s, 50, 10)[1] > 0.99, "white background above");
+}
+
 /// A 40×20 JPEG (left half red, right half blue) tagged EXIF Orientation = 6: shown upright it
 /// is 20×40, red on top.
 fn rotated_jpeg(dir: &str) -> String {
