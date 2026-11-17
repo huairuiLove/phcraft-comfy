@@ -54,6 +54,8 @@ pub fn entries(l: &Layer, multi: bool, has_selection: bool) -> Vec<Entry> {
     let mut v: Vec<Entry> = vec![Some((tl!("Blending Options…"), "layer.layerStyle.blendingOptions"))];
     v.push(None);
     v.push(Some((if multi { tl!("Duplicate Layers…") } else { tl!("Duplicate Layer…") }, "layer.duplicate")));
+    // The tray's stash step (layer_tray.rs), beside the duplicate-a-layer commands.
+    v.push(Some((tl!("Add to Tray"), "layer.tray.put")));
     v.push(Some((if multi { tl!("Delete Layers") } else { tl!("Delete Layer") }, "layer.delete")));
     // Groups the clicked layer, or the whole selection when several layers are selected, after
     // Photoshop's New Group dialog.

@@ -69,7 +69,7 @@ index 96442019..7fd84787 100644
 -            // but the `screen_rect` is the most important part.
 +            // The upstream hack that also rescaled `screen_rect` by the zoom ratio (to keep
 +            // egui windows in place across zooms) is removed: a shell that derives its zoom
-+            // FROM the content size (PhotoCraft's Touch Interface scale) reads the poisoned
++            // FROM the content size (PhotoComfy's Touch Interface scale) reads the poisoned
 +            // rect back, recomputes a different zoom, and the two chase each other forever —
 +            // the whole interface oscillated between zooms on a partial-size iPad window.
 +            // The true screen rect from the platform stands.

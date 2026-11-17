@@ -41,6 +41,7 @@ pub static ICONS: &[(&str, &[u8])] = &[
     ("circle-dashed", include_bytes!("../../../assets/icons/circle-dashed.svg")),
     ("circle-dot", include_bytes!("../../../assets/icons/circle-dot.svg")),
     ("clip-below", include_bytes!("../../../assets/icons/clip-below.svg")),
+    ("clipboard", include_bytes!("../../../assets/icons/clipboard.svg")),
     ("clip-release", include_bytes!("../../../assets/icons/clip-release.svg")),
     ("clock", include_bytes!("../../../assets/icons/clock.svg")),
     ("cloud", include_bytes!("../../../assets/icons/cloud.svg")),

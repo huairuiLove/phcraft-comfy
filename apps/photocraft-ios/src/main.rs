@@ -164,6 +164,10 @@ impl IosShell {
         // reach the system pasteboard, which egui-winit cannot do on iOS.
         cc.egui_ctx.add_plugin(photocraft_ui_egui::system_clipboard::CopySync::new(clipboard::bridge()));
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services());
+        // Pen-only painting, the iPad's own policy (Photoshop on iPad): a finger pans, pinches
+        // and taps the UI, the Apple Pencil paints. The flag is each shell's choice — Android
+        // and the web leave it off — and the classifier is shared (input/finger.rs).
+        app.pen_only_painting = true;
         // Testing aid (a launcher sets no CLI args for an iPad app): open a document at start,
         // to reproduce the canvas states a reviewer sees.
         if std::env::var_os("PHOTOCRAFT_OPEN_NEW").is_some()
@@ -413,8 +417,8 @@ const PREFS_FILE: &str = "preferences.json";
 
 /// The app container's Application Support folder. The iOS sandbox's `HOME` is the container
 /// (the simulator's likewise); created on first use, `None` where storage is unavailable.
-/// The app was born PhotoCraft: its first home (preferences, the Generations folder) moves
-/// here once, so the rename keeps what the user configured.
+/// The legacy mobile home (preferences and the Generations folder) moves here once, so the
+/// rename keeps what the user configured.
 fn app_support_dir() -> Option<PathBuf> {
     let base = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support");
     let dir = base.join("PhotoComfy");

@@ -262,10 +262,12 @@
 	Paste Outside	粘贴到选区外
 	Paste Lorem Ipsum	粘贴占位文本
 	Clear	清除
+	Clear Tray	清空托盘
 	Search…	搜索…
 	Check Spelling…	检查拼写…
 	Find and Replace Text…	查找和替换文本…
 	Add to Dictionary	添加到词典
+	Add to Tray	加入托盘
 	No Spelling Suggestions	没有拼写建议
 	Fill…	填充…
 	Stroke…	描边…
@@ -444,6 +446,13 @@
 	Rename Layer	重命名图层
 	Create Layer	创建图层
 	Layer Style	图层样式
+	Layer Tray	图层托盘
+	Release to add to the tray	松手放入托盘
+	Release to cut to the tray	松手剪切到托盘
+	Added to the tray. Switch documents, then tap the Layer Tray button to place it	已放入托盘。切换文档后,轻点图层托盘按钮取出
+	Cut to the tray. Switch documents, then tap the Layer Tray button to place it	已剪切到托盘。切换文档后,轻点图层托盘按钮取出
+	Copy: stashing keeps the layers here, placing keeps the slot	复制:存入时保留这里的图层,取出时保留槽位
+	Cut: stashing removes the layers here, placing empties the slot	剪切:存入时移除这里的图层,取出时清空槽位
 	Blending Options…	混合选项…
 	Bevel & Emboss…	斜面和浮雕…
 	Use Global Light	使用全局光
@@ -477,6 +486,7 @@
 	Hide Selection	隐藏选区
 	Hide All	隐藏全部
 	From Transparency	从透明区域
+	From {doc}	来自 {doc}
 	Delete Vector Mask	删除矢量蒙版
 	Enable Layer Mask	启用图层蒙版
 	Disable Layer Mask	禁用图层蒙版
@@ -861,6 +871,7 @@
 	Workspace	工作区
 	Essentials	基本功能
 	Graphic and Web	图形与 Web
+	Painting needs the Apple Pencil	绘画需要 Apple Pencil
 	Painting	绘画
 	Photography	摄影
 	New Workspace…	新建工作区…
@@ -3089,6 +3100,7 @@ curves	Smooth	平滑
 	Toggle reference point	切换参考点
 	Free Transform is still being applied; try again when it has finished.	自由变换仍在应用中；请在完成后重试。
 	The transform couldn't be applied.	无法应用变换。
+	The tray is empty: drag layers onto the button, or use Add to Tray in a layer's menu	托盘为空:把图层拖到按钮上,或在图层菜单中使用“加入托盘”
 	Its layers need {needed} of GPU memory; the budget leaves them {budget}.	其图层需要 {needed} GPU 内存；预算只留给它们 {budget}。
 	Set GPU Memory in Preferences › Performance to what your graphics card can hold, at most 3/8 of its memory. Automatic follows Memory Usage, within a quarter of this computer's memory and 3/8 of the card's, and doesn't count the document against a card whose memory is known. The status bar shows GPU Memory Full while they don't fit.	在 首选项 › 性能 中将 GPU 内存设置为显卡能容纳的大小，最多为其显存的 3/8。自动跟随内存使用量，不超过本机内存的四分之一和显卡显存的 3/8，且在显存已知的显卡上不把文档计入。在图层放不下期间，状态栏显示“GPU 内存已满”。
 	GPU Memory Full	GPU 内存已满
@@ -3294,3 +3306,5 @@ smartSvg	AI/PDF/EPS contents will be edited as SVG. Saving replaces the embedded
 	Pick a different document for each channel.	请为每个通道选择不同的文档。
 	A picked document is no longer open.	所选的一个文档已不再打开。
 	A picked document is no longer a grayscale document of the same size.	所选的一个文档已不再是同样大小的灰度文档。
+	Start ComfyUI Automatically	自动启动 ComfyUI
+	ComfyUI Launch Command	ComfyUI 启动命令

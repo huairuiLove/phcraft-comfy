@@ -1178,3 +1178,25 @@ fn image_api_settings_default_empty_and_round_trip() {
     // The ComfyUI defaults survive the new fields.
     assert_eq!(s.prefs().integrations.comfy_url, crate::comfy_cmds::DEFAULT_URL);
 }
+
+/// The ComfyUI auto-start settings default off/empty, round-trip, old files still load, and a
+/// hostile launch command is refused by `prefs.set` rather than stored.
+#[test]
+fn comfy_autostart_settings_default_off_and_round_trip() {
+    let p = Integrations::default();
+    assert!(!p.comfy_autostart && p.comfy_command.is_empty());
+    let mut s = session();
+    let legacy = json!({"integrations": {"comfyUrl": "http://127.0.0.1:8188"}}).to_string();
+    s.load_prefs_json(&legacy).unwrap();
+    assert!(!s.prefs().integrations.comfy_autostart);
+    assert_eq!(s.prefs().integrations.comfy_command, "");
+    let saved = json!({"integrations": {"comfyAutostart": true, "comfyCommand": "cd /opt/ComfyUI && python main.py"}});
+    s.load_prefs_json(&saved.to_string()).unwrap();
+    assert!(s.prefs().integrations.comfy_autostart);
+    assert_eq!(s.prefs().integrations.comfy_command, "cd /opt/ComfyUI && python main.py");
+    // A megabyte launch command is hostile input, not a setting.
+    let e = s.execute("prefs.set", json!({"path": "integrations.comfyCommand", "value": "x".repeat(2_001)})).unwrap_err().to_string();
+    assert!(e.contains("2000"), "{e}");
+    let e = s.execute("prefs.set", json!({"path": "integrations.comfyCommand", "value": 42})).unwrap_err().to_string();
+    assert!(e.contains("string"), "{e}");
+}

@@ -92,7 +92,7 @@ mod tools;
 use app::layer_thumb_frame;
 use app::read_dropped;
 pub use app::surface_fingerprint;
-pub(crate) use app::{adjustment_layer_active, remember_new_document};
+pub(crate) use app::{ThumbCache, ThumbFrames, adjustment_layer_active, remember_new_document};
 use canvas::ants;
 pub use canvas::artboard_ui;
 pub(crate) use canvas::background_redraw;
@@ -504,10 +504,10 @@ pub struct PhotocraftApp {
     path_document: Option<(DocId, u64, std::sync::Weak<Document>)>,
     pub fps: f32,
     pub(crate) last_frame_time: f64,
-    thumbs: HashMap<(photocraft_doc::LayerId, u8), (u64, egui::TextureHandle)>,
+    thumbs: ThumbCache,
     /// The document area each layer thumbnail in `thumbs` frames (the canvas, or the layer's
     /// bounds with Clip Thumbnails to Layer Bounds; #4281).
-    thumb_frames: HashMap<photocraft_doc::LayerId, photocraft_geom::Rect>,
+    thumb_frames: ThumbFrames,
     /// History snapshot thumbnails by (document, snapshot id), each with the snapshot document it
     /// shows (`snapshot_thumb`, #2966): made once, and again only when that is a different one (a
     /// preserved-ID reopen, or the first snapshot refreshed for a served font, #6087).
@@ -726,6 +726,13 @@ pub struct PhotocraftApp {
     pub(crate) allow_close: bool,
     /// Pen pressure/tilt from the platform (see `stylus`).
     pub stylus: stylus::Stylus,
+    /// Which touch contact the emulated pointer press belongs to, and whether it is a finger
+    /// (input/finger.rs); updated at the top of `logic_frame`.
+    pub(crate) fingers: input::finger::FingerPresses,
+    /// Pen-only painting (the iPad shell turns it on): a finger's press never starts a brush
+    /// stroke or a Liquify push; the pencil, a mouse, automation and every other tool are
+    /// unaffected. Desktop, web and Android leave it off.
+    pub pen_only_painting: bool,
     control_click: control_click::ControlClick,
     /// Run long commands and file opens as background jobs with progress and Cancel (#210; see
     /// `jobs_ui`). The desktop app turns it on; off (the default), everything runs inline as
@@ -877,6 +884,18 @@ mod color_tab_theme_tests;
 
 #[cfg(test)]
 mod new_layer_button_tests;
+
+#[cfg(test)]
+mod layer_tray_ui_tests;
+
+#[cfg(test)]
+mod pen_only_painting_tests;
+
+#[cfg(test)]
+mod quick_actions_tests;
+
+#[cfg(test)]
+mod screen_mode_chip_tests;
 
 #[cfg(test)]
 mod smart_filter_rows_tests;

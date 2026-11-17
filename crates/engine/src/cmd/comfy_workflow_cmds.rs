@@ -1053,6 +1053,8 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let transport = transport_fn(s)?;
     let url = comfy_cmds::url_of(s, p)?;
+    // Auto-start, like ai.comfyui.generate: the worker starts a cold server before uploading.
+    let launch = comfy_cmds::start_command(s, &url)?;
     let seed = params.seed.unwrap_or_else(comfy_cmds::random_seed);
     let client_id = format!("photocraft-fill-{:016x}", comfy_cmds::now_millis());
     let workflow_name = params.workflow.clone();
@@ -1062,6 +1064,7 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
         "Generate (ComfyUI)",
         false,
         move |ctx: &JobCtx| {
+            comfy_cmds::ensure_started(ctx, &transport, &url, launch.as_deref())?;
             ctx.progress(0.02, "Preparing the source image…");
             let png = source_png(&doc, params.source, active)?;
             ctx.progress(0.06, "Uploading…");
@@ -1614,6 +1617,7 @@ mod tests {
         static CALLS: std::cell::RefCell<Vec<(&'static str, String)>> = const { std::cell::RefCell::new(Vec::new()) };
         static UPLOADS: std::cell::RefCell<Vec<Vec<u8>>> = const { std::cell::RefCell::new(Vec::new()) };
         static API_CALLS: std::cell::RefCell<Vec<Value>> = const { std::cell::RefCell::new(Vec::new()) };
+        static STARTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     }
 
     /// A transport that answers like ComfyUI, recording the upload name and queued workflow. The
@@ -1622,6 +1626,10 @@ mod tests {
         let png = test_png();
         std::sync::Arc::new(move |req: &ComfyRequest| match &req.call {
             ComfyCall::ObjectInfo => Ok(ComfyReply::Json(object_info_fixture())),
+            ComfyCall::Start { command } => {
+                STARTS.with(|s| s.borrow_mut().push(command.clone()));
+                Ok(ComfyReply::Json(json!({"system": {"comfyui_version": "1.0"}})))
+            }
             ComfyCall::Upload { name, bytes } => {
                 CALLS.with(|c| c.borrow_mut().push(("upload", name.clone())));
                 UPLOADS.with(|u| u.borrow_mut().push(bytes.clone()));
@@ -1675,6 +1683,23 @@ mod tests {
 
     fn last_upload() -> Option<Vec<u8>> {
         UPLOADS.with(|u| u.borrow().last().cloned())
+    }
+
+    #[test]
+    fn fill_starts_a_configured_server_before_uploading() {
+        let mut s = doc_with_selection();
+        // Auto-start unset: the upload is the first thing the server sees.
+        s.execute("ai.comfyui.fill", json!({"workflow": "FLUX.3 Klein Image Edit", "prompt": "p", "place": "none"})).unwrap();
+        assert!(STARTS.with(|st| st.borrow().is_empty()));
+        // On: the launch command runs first, then the upload.
+        s.prefs.edit(|p| {
+            p.integrations.comfy_autostart = true;
+            p.integrations.comfy_command = "cd /opt/ComfyUI && python main.py".into();
+        });
+        CALLS.with(|c| c.borrow_mut().clear());
+        s.execute("ai.comfyui.fill", json!({"workflow": "FLUX.3 Klein Image Edit", "prompt": "p", "place": "none"})).unwrap();
+        STARTS.with(|st| assert_eq!(st.borrow().as_slice(), ["cd /opt/ComfyUI && python main.py"]));
+        assert!(CALLS.with(|c| c.borrow().first().map(|(k, _)| *k) == Some("upload")));
     }
 
     #[test]

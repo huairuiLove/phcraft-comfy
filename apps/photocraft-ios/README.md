@@ -7,8 +7,32 @@ needed; the binary is the app bundle's `CFBundleExecutable`.
 
 Touch input is egui input: winit's iOS backend delivers taps (and Apple Pencil force, as
 `Force::Calibrated`) as egui `Touch`/pointer events, `input/stylus.rs` feeds the pressure, and
-`touch_twins` de-duplicates double-delivered taps in `raw_input_hook`. Two fingers pan and pinch
-the canvas and stand the tool down (Photoshop on iPad). The interface runs in Preferences ›
+`touch_twins` de-duplicates double-delivered taps in `raw_input_hook`. Painting is pen-only, as
+Photoshop on iPad: a finger (a contact without a force) pans, pinches and taps the UI but never
+starts a brush stroke or a Liquify push — the hint says "Painting needs the Apple Pencil" —
+while the pencil, a mouse and automation paint (the `pen_only_painting` flag is each shell's
+own choice: Android and the web leave it off). Long-press is the touch
+right-click: a finger held still for half a second opens every context menu, including the text
+fields' edit menu (Cut/Copy/Paste — Paste reads the system pasteboard through the clipboard
+bridge). Two fingers pan and pinch the canvas and stand the tool down (Photoshop on iPad).
+Moving layers to another document works without the desktop's tab drag: the **layer tray** —
+drag a layer row out and a tray strip appears over the canvas's top edge ("Layer Tray · n");
+release the row on it (or use "Add to Tray" in a layer's long-press menu, or drop the row on
+the tray button in the Layers footer) and the selection is stashed. Switch documents, then
+tap the tray button: its popup lists the slots, each row showing the stashed layer's thumbnail
+and name over the document it came from, and a tap places a slot — or drag a slot row out of
+the popup onto the canvas to place its layers centred on that point, converted to the
+destination's colour and depth.
+The popup's **Copy | Cut** toggle (a tap; iPadOS has no right-click, so nothing in the tray
+needs one) picks the semantics: Copy keeps the layers in the source document and keeps the
+slot after placing; Cut removes them from the source on stash and empties the slot on place
+— move. A **quick-actions column** (Undo, Redo, Copy, Cut, Paste) floats at the canvas's
+top-right corner, left of the end dock — the touch answer to ⌘Z/⌘⇧Z/⌘C/⌘X/⌘V; each button
+runs the engine's own edit command, so enablement and the OS-clipboard paste behave exactly
+as the Edit menu's. And because an iPad has neither an Esc nor a Tab key, a full-screen
+mode (View › Screen Mode) keeps a small **exit chip** at the canvas's top-left corner: one
+tap returns to the Standard screen mode, where the tools, drawer and menus come back. The
+interface runs in Preferences ›
 Interface › Touch Interface (on by default on iPadOS): magnified targets, always-visible scroll
 bars, and the safe area respected at the screen edges. Services the OS doesn't provide an iPad
 app (desktop file dialogs, the clipboard bridge, crash recovery) stay unset and the shell

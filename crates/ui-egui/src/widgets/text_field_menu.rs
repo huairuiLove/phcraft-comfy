@@ -171,9 +171,14 @@ impl egui::plugin::Plugin for TextFieldMenu {
 /// A secondary press this pass inside the focused text field `field`: where, and whether the
 /// field has a selection. A press inside the selection the field had at the end of the last pass
 /// (`last`) keeps it: egui moved the caret to the pointer.
+///
+/// A press still held says where it started (`press_origin`); a press released within the same
+/// frame — the touch long-press's synthetic right-click, an agent's `ui.click` — leaves no origin
+/// behind, so the last position that frame interacted at stands in for it (a same-frame release
+/// never moves the pointer after its press).
 fn secondary_press_in(ctx: &Context, field: Id, last: Option<(Id, CCursorRange)>) -> Option<(Pos2, bool)> {
-    let (pressed, origin) = ctx.input(|i| (i.pointer.button_pressed(PointerButton::Secondary), i.pointer.press_origin()));
-    let pos = origin.filter(|_| pressed)?;
+    let (pressed, origin, interact) = ctx.input(|i| (i.pointer.button_pressed(PointerButton::Secondary), i.pointer.press_origin(), i.pointer.interact_pos()));
+    let pos = origin.or(interact).filter(|_| pressed)?;
     let mut state = egui::TextEdit::load_state(ctx, field)?;
     let response = ctx.read_response(field)?;
     if !response.interact_rect.contains(pos) || ctx.layer_id_at(pos) != Some(response.layer_id) {
@@ -350,6 +355,30 @@ mod tests {
 
     fn text(h: &Harness<'_, PhotocraftApp>) -> String {
         rename(&h.ctx).expect("still renaming").text
+    }
+
+    #[test]
+    fn a_same_frame_right_click_opens_the_menu_too() {
+        let (mut h, field) = renaming();
+        // The touch long-press (long_press.rs) and an agent's `ui.click` deliver the secondary
+        // press AND release in one frame; no held press ever exists, so no press origin either.
+        // (kittest's `event` gives each event a frame of its own, so the pair goes in raw.)
+        let at = h.ctx.read_response(field).expect("field drawn").rect.center();
+        h.hover_at(at);
+        h.step();
+        h.input_mut().events = vec![
+            // The exact tail long_press.rs injects: the held finger's primary release, a
+            // PointerGone, then the complete synthetic right-click.
+            Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE },
+            Event::PointerGone,
+            Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE },
+            Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE },
+        ];
+        h.step();
+        assert_eq!(open_on(&h.ctx), Some(field), "a one-frame right-click in a text field opens its edit menu");
+        // A new area is measured in an invisible first pass; it is placed in the next one.
+        h.run_steps(2);
+        assert!(item(&h, "Paste").is_some(), "the menu is up with its items");
     }
 
     #[test]

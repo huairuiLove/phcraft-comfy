@@ -1095,6 +1095,13 @@ pub struct Integrations {
     pub comfy_url: String,
     /// Folder the imported ComfyUI workflows live in (empty: the config dir's `comfy_workflows`).
     pub comfy_workflows_dir: String,
+    /// Start ComfyUI through `comfyCommand` when a generation finds the server down. Desktop
+    /// only, and only for a loopback server address — a remote one cannot be started from here.
+    pub comfy_autostart: bool,
+    /// The shell command that starts ComfyUI (run as `sh -c` / `cmd /C`), for example
+    /// `cd /opt/ComfyUI && python main.py --port 8188`. Empty: the desktop shell starts a local
+    /// ComfyUI it finds (a ComfyUI Desktop install, or a checkout with a virtualenv).
+    pub comfy_command: String,
     /// The OpenAI-compatible image API the iPad app generates through directly (the "Image API
     /// Edit" workflow): base address like `https://api.example.com` (`/v1` appended when absent).
     /// Empty: the Image API commands explain what to set.
@@ -1113,6 +1120,8 @@ impl Default for Integrations {
             control_port: 0,
             comfy_url: crate::comfy_cmds::DEFAULT_URL.into(),
             comfy_workflows_dir: String::new(),
+            comfy_autostart: false,
+            comfy_command: String::new(),
             image_api_base: String::new(),
             image_api_key: String::new(),
             image_api_model: String::new(),

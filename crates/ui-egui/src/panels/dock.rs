@@ -13,6 +13,9 @@ use super::{PhotocraftApp, Stroke, Tokens, icons, pos2, vec2};
 /// (craft-ui docks only to a screen's side edges, and a portrait iPad has no side to give).
 pub fn dock_area(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    // The drag-summoned layer tray strip runs before the panels draw, so on the release frame it
+    // still sees the drag the Layers panel clears later in the same pass (layer_tray.rs).
+    super::layer_tray::drag_strip(app, ui);
     if crate::touch::portrait(app, ui.ctx()) {
         // All side panels before the central one (egui's panel order), the drawer first so the
         // tool strip keeps the screen's bottom edge.

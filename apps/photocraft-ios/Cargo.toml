@@ -1,6 +1,6 @@
 [package]
 name = "photocraft-ios"
-description = "PhotoCraft for iPadOS (eframe native runner, Metal, touch UI)"
+description = "PhotoComfy for iPadOS (eframe native runner, Metal, touch UI)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -525,6 +525,8 @@ pub(super) fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         if ui.add_enabled_ui(can_link, |ui| icons::button(ui, "link-2", 26.0, false, tl!("Link layers"))).inner.clicked() {
             actions.push(("layer.linkLayers".into(), json!({})));
         }
+        // The layer tray: stash layers here, place them in another document (layer_tray.rs).
+        super::layer_tray::footer_button(app, ui, footer_drag, &mut actions);
     });
     for (id, p) in actions {
         // A row click commits even when it selects the layer already being edited (#5584).
@@ -553,6 +555,16 @@ pub(super) fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         }
         if id == "ui.filterMaskTarget" {
             app.select_filter_mask_target(p.as_u64());
+            continue;
+        }
+        // The tray's stash and place honour the popup's Copy | Cut mode in every entry point
+        // (the footer drop, the layer menu's Add to Tray, the popup's rows).
+        if id == "layer.tray.put" {
+            super::layer_tray::run_put(app, &p);
+            continue;
+        }
+        if id == "layer.tray.place" {
+            super::layer_tray::run_place(app, p);
             continue;
         }
         // Double-clicking a mask thumbnail opens its settings: show Properties.

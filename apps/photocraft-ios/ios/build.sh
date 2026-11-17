@@ -70,6 +70,11 @@ esac
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO"
 
+# Keep iOS intermediates out of the desktop and Android target trees. Xcode and CI can export
+# CARGO_TARGET_DIR, but reusing that directory makes the bundle step pick up another platform's
+# binary (or makes Cargo write the binary where the fixed path below cannot find it).
+export CARGO_TARGET_DIR="$REPO/target/ios"
+
 # Embed the craft-fonts faces like a desktop build (docs/development.md › Fonts): iPadOS, unlike
 # macOS, lets no app read the system font files, so without these the UI's Chinese and other
 # script text has no glyphs to fall back to. The documented sibling checkout is picked up
@@ -79,12 +84,12 @@ if [ -z "${CRAFT_FONTS_DIR:-}" ] && [ -d "$REPO/../craft-fonts/fonts" ]; then
     export CRAFT_FONTS_DIR
 fi
 
-echo "building photocraft-ios for $TARGET ($PROFILE)…"
+echo "building PhotoComfy for $TARGET ($PROFILE)…"
 # --offline keeps cargo from a network round-trip on every Xcode Run; the fingerprint check
 # below makes repeats cheap, and an actually-needed dependency update is a deliberate act.
 cargo build --profile "$PROFILE" --target "$TARGET" --offline -p photocraft-ios
 
-BIN="target/$TARGET/$PROFILE/photocraft-ios"
+BIN="$CARGO_TARGET_DIR/$TARGET/$PROFILE/photocraft-ios"
 if [ ! -f "$BIN" ]; then
     echo "error: cargo produced no binary at $BIN" >&2
     exit 1
@@ -98,7 +103,7 @@ cp "$BIN" "$APP/$PRODUCT"
 # standalone they get the same values the target's settings carry.
 if [ ! -f "$APP/Info.plist" ]; then
     sed -e "s/\$(EXECUTABLE_NAME)/$PRODUCT/" \
-        -e "s/\$(PRODUCT_BUNDLE_IDENTIFIER)/ai.storyteller.photocraft.ios/" \
+        -e "s/\$(PRODUCT_BUNDLE_IDENTIFIER)/photocomfy/" \
         -e "s/\$(MARKETING_VERSION)/0.20.1/" \
         -e "s/\$(CURRENT_PROJECT_VERSION)/1/" \
         "$(dirname "$0")/PhotoComfy/Info.plist" > "$APP/Info.plist"

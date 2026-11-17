@@ -234,9 +234,9 @@ pub struct LiquifyDialog {
     pub strokes: Vec<LiquifyStroke>,
     redo: Vec<LiquifyStroke>,
     /// The stroke being drawn and its last point.
-    cur: Option<(LiquifyStroke, [f64; 3])>,
+    pub(crate) cur: Option<(LiquifyStroke, [f64; 3])>,
     /// The lasso polygon being drawn (document px) and whether it thaws (Alt held at pointer-down).
-    lasso: Option<(bool, Vec<[f64; 2]>)>,
+    pub(crate) lasso: Option<(bool, Vec<[f64; 2]>)>,
     proxy: ProxyImage,
     source: Surface,
     target: Value,
@@ -783,6 +783,15 @@ fn resized_brush(start_size: f32, start_density: f32, dx: f32, dy: f32, zoom: f3
 /// pointer-down subtracts from the freeze mask (lasso), reverses a twirl and swaps Pucker/Bloat;
 /// Shift adds to the mask, same as no modifier.
 pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) {
+    // Pen-only painting (the iPad shell): a finger never pushes, freezes, thaws or lassos —
+    // every Liquify tool, like the brush tools outside (`preflight_tool_event`).
+    if app.pen_only_painting
+        && matches!(ev, ToolEvent::Down { .. })
+        && app.fingers.pointer_is_finger()
+    {
+        app.ui.status = tl!("Painting needs the Apple Pencil").into();
+        return;
+    }
     let now = crate::gpu_canvas::now_ms();
     let Some(d) = app.distort.liquify.as_mut() else { return };
     match ev {

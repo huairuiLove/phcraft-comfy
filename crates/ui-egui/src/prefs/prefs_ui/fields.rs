@@ -36,6 +36,8 @@ pub(super) fn humanize(key: &str) -> String {
         "automaticallyCheckUpdates" => return "Automatically Check for Updates".into(),
         "comfyUrl" => return "ComfyUI Server URL".into(),
         "comfyWorkflowsDir" => return "ComfyUI Workflows Folder".into(),
+        "comfyAutostart" => return "Start ComfyUI Automatically".into(),
+        "comfyCommand" => return "ComfyUI Launch Command".into(),
         "imageApiBase" => return "Image API Endpoint".into(),
         "imageApiKey" => return "Image API Key".into(),
         "imageApiModel" => return "Image API Model".into(),

@@ -1,5 +1,13 @@
 use super::{DocId, Document, PhotocraftApp, mask_thumbs_ui};
 
+/// The layer and mask thumbnail textures the Layers panel and the layer tray share: (layer, kind)
+/// → the pixels' fingerprint and the texture.
+pub type ThumbCache = std::collections::HashMap<(photocraft_doc::LayerId, u8), (u64, egui::TextureHandle)>;
+
+/// The document area each layer thumbnail in [`ThumbCache`] frames (the canvas, or the layer's
+/// bounds with Clip Thumbnails to Layer Bounds; #4281).
+pub type ThumbFrames = std::collections::HashMap<photocraft_doc::LayerId, photocraft_geom::Rect>;
+
 impl PhotocraftApp {
     pub(super) fn prune_thumbs(&mut self) {
         let documents = self.session.documents();
@@ -13,6 +21,9 @@ impl PhotocraftApp {
         if !self.thumbs.is_empty() {
             let mut live = std::collections::HashSet::new();
             let mut pending: Vec<_> = documents.iter().flat_map(|st| &st.doc.layers).collect();
+            // The layer tray draws its stashed layers' thumbnails, and those layers belong to no
+            // open document: keep their entries alive while their slot exists.
+            pending.extend(self.session.layer_tray.iter().flat_map(|slot| &slot.doc.layers));
             while let Some(layer) = pending.pop() {
                 live.insert((layer.id, mask_thumbs_ui::THUMB_LAYER));
                 if layer.mask.is_some() {
@@ -40,27 +51,7 @@ impl PhotocraftApp {
     /// area it frames: the canvas, or with Clip Thumbnails to Layer Bounds the layer's pixels.
     pub fn layer_thumb(&mut self, ctx: &egui::Context, doc: &Document, layer: &photocraft_doc::Layer) -> (egui::TextureId, photocraft_geom::Rect) {
         let clip = self.session.prefs().interface.clip_thumbnails_to_layer_bounds;
-        // Key by content, not document revision: COW tiles change pointer only when their pixels
-        // change, so unrelated edits (e.g. painting another layer) don't rebuild this thumbnail.
-        let rev = layer.surface().map_or(0, surface_fingerprint) ^ (doc.size.width as u64) << 40 ^ u64::from(clip) << 63;
-        let key = (layer.id, mask_thumbs_ui::THUMB_LAYER);
-        if let Some((r, tex)) = self.thumbs.get(&key)
-            && *r == rev
-            && let Some(frame) = self.thumb_frames.get(&layer.id)
-        {
-            return (tex.id(), *frame);
-        }
-        let canvas = doc.bounds();
-        let frame = layer_thumb_frame(layer, canvas, clip);
-        let mut px = [0.0f32; 8];
-        let img = thumb_image(frame, 64, |x, y| {
-            let Some(s) = layer.surface() else { return [0.0; 4] };
-            let n = s.channels();
-            s.read_pixel(x, y, &mut px[..n]);
-            photocraft_raster::to_rgba(&s.format(), &px[..n])
-        });
-        self.thumb_frames.insert(layer.id, frame);
-        (self.store_thumb(ctx, key, rev, img), frame)
+        layer_thumb_cached(&mut self.thumbs, &mut self.thumb_frames, clip, doc.bounds(), ctx, layer)
     }
 
     /// Drops the thumbnails of `doc`'s snapshots not in `live` (deleted ones). Those of closed
@@ -123,20 +114,66 @@ impl PhotocraftApp {
     }
 
     pub(crate) fn store_thumb(&mut self, ctx: &egui::Context, key: (photocraft_doc::LayerId, u8), rev: u64, img: egui::ColorImage) -> egui::TextureId {
-        match self.thumbs.get_mut(&key) {
-            Some((r, tex)) => {
-                tex.set(img, egui::TextureOptions::LINEAR);
-                *r = rev;
-                tex.id()
-            }
-            None => {
-                let tex = ctx.load_texture(format!("thumb-{}-{}", key.0.0, key.1), img, egui::TextureOptions::LINEAR);
-                let id = tex.id();
-                self.thumbs.insert(key, (rev, tex));
-                id
-            }
+        store_thumb(&mut self.thumbs, ctx, key, rev, img)
+    }
+}
+
+/// Cache `img` as the thumbnail of `key`, at pixels' revision `rev`, in the texture it already
+/// has or a new one.
+pub(crate) fn store_thumb(
+    thumbs: &mut ThumbCache,
+    ctx: &egui::Context,
+    key: (photocraft_doc::LayerId, u8),
+    rev: u64,
+    img: egui::ColorImage,
+) -> egui::TextureId {
+    match thumbs.get_mut(&key) {
+        Some((r, tex)) => {
+            tex.set(img, egui::TextureOptions::LINEAR);
+            *r = rev;
+            tex.id()
+        }
+        None => {
+            let tex = ctx.load_texture(format!("thumb-{}-{}", key.0.0, key.1), img, egui::TextureOptions::LINEAR);
+            let id = tex.id();
+            thumbs.insert(key, (rev, tex));
+            id
         }
     }
+}
+
+/// Cached 64px thumbnail of a pixel-ish layer of a document whose canvas is `canvas`, letterboxed
+/// in a square, and the document area it frames: the canvas, or with `clip` the layer's pixels.
+/// Taken apart from [`PhotocraftApp`] so the layer tray can draw a stashed document's layers,
+/// which belong to no open document, while it borrows that document from the session.
+pub(crate) fn layer_thumb_cached(
+    thumbs: &mut ThumbCache,
+    thumb_frames: &mut ThumbFrames,
+    clip: bool,
+    canvas: photocraft_geom::Rect,
+    ctx: &egui::Context,
+    layer: &photocraft_doc::Layer,
+) -> (egui::TextureId, photocraft_geom::Rect) {
+    // Key by content, not document revision: COW tiles change pointer only when their pixels
+    // change, so unrelated edits (e.g. painting another layer) don't rebuild this thumbnail.
+    let rev = layer.surface().map_or(0, surface_fingerprint) ^ (canvas.width() as u64) << 40 ^ u64::from(clip) << 63;
+    let key = (layer.id, mask_thumbs_ui::THUMB_LAYER);
+    if let Some((r, tex)) = thumbs.get(&key)
+        && *r == rev
+        && let Some(frame) = thumb_frames.get(&layer.id)
+    {
+        return (tex.id(), *frame);
+    }
+    let frame = layer_thumb_frame(layer, canvas, clip);
+    let mut px = [0.0f32; 8];
+    let img = thumb_image(frame, 64, |x, y| {
+        let Some(s) = layer.surface() else { return [0.0; 4] };
+        let n = s.channels();
+        s.read_pixel(x, y, &mut px[..n]);
+        photocraft_raster::to_rgba(&s.format(), &px[..n])
+    });
+    thumb_frames.insert(layer.id, frame);
+    (store_thumb(thumbs, ctx, key, rev, img), frame)
 }
 
 /// Cheap identity of a surface's pixels: its default (untouched) pixel, tile coordinates and

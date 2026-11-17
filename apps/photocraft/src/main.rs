@@ -37,6 +37,7 @@ mod apple_events;
 mod caps_lock;
 mod caption_style;
 mod comfy;
+mod comfy_detect;
 mod control_server;
 mod crash_guard;
 mod cursor;

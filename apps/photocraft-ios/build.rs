@@ -12,7 +12,7 @@ fn main() {
         // swizzles initWithFrame:, whose swapped return must follow the init-family retain rule —
         // under manual retain/release the autoreleased static array dangles after the first pool
         // drain and the next fast-enumeration crashes (NSInvalidArgumentException on the reused
-        // memory, PhotoCraft-2026-11-09-003123.ips).
+        // memory, PhotoComfy-2026-11-09-003123.ips).
         cc::Build::new()
             .file("ios/PCSceneDelegate.m")
             .file("ios/PCDocumentPicker.m")

@@ -301,6 +301,17 @@ impl PhotocraftApp {
         if ((chrome && self.ui.panels.toolbar) || tabbed_in) && !home {
             panels::toolbar(self, ui);
         }
+        // The touch quick-actions column (Undo/Redo/Copy/Cut/Paste) floats over the canvas's
+        // top-right corner whether the dock is shown or not (panels/quick_actions.rs).
+        if chrome && !home {
+            panels::quick_actions::column(self, ui);
+        }
+        // The full-screen exit chip: an iPad has no Esc and no Tab, so a full-screen mode must
+        // keep a visible way back (panels/screen_mode_chip.rs). It shows in every layout, chrome
+        // or not — the bare full-screen mode is exactly where nothing else is.
+        if !home {
+            panels::screen_mode_chip::chip(self, ui);
+        }
         // craft-ui's layout holds the canvas as its protected `canvas` panel.
         let docking = ((chrome && self.ui.panels.dock) || tabbed_in) && !home;
         if docking {

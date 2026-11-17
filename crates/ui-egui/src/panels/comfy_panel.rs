@@ -120,6 +120,8 @@ pub struct ComfyQueue {
     pub listed: bool,
     /// The connection check's one-line answer.
     pub check: Option<String>,
+    /// A `ai.comfyui.start` job is running; when it ends, the connection re-checks itself.
+    pub starting: bool,
     /// Result thumbnails, keyed by (created_ms, seed).
     pub thumbs: HashMap<(u64, u64), TextureHandle>,
 }
@@ -317,6 +319,11 @@ fn add_to_queue(app: &mut PhotocraftApp) {
 /// Start the next waiting task when the engine is idle, and retire the running one when its
 /// job ended (the shelf grew: done; otherwise: failed with the status line's error).
 fn schedule(app: &mut PhotocraftApp) {
+    // A Start clicked in the connection row: once its job ends, the check runs again by itself.
+    if app.comfy_queue.starting && app.session.jobs().is_empty() {
+        app.comfy_queue.starting = false;
+        run_check(app);
+    }
     let job_running = !app.session.jobs().is_empty();
     let shelf = app.session.comfy.results.len();
     if let Some(i) = app.comfy_queue.tasks.iter().position(|t| t.state == "running") {
@@ -428,6 +435,17 @@ fn api_workflow_selected(app: &PhotocraftApp) -> bool {
     selected.is_some_and(|(_, _, analyze)| analyze.get("api") == Some(&json!(true)))
 }
 
+/// Ask the engine whether the server answers, as the Check button does.
+fn run_check(app: &mut PhotocraftApp) {
+    match app.run("ai.comfyui.check", json!({})) {
+        Ok(v) => {
+            let version = v.pointer("/server/system/comfyui_version").and_then(Value::as_str).unwrap_or("?").to_string();
+            app.comfy_queue.check = Some(format!("ComfyUI {version}"));
+        }
+        Err(e) => app.comfy_queue.check = Some(format!("✗ {e}")),
+    }
+}
+
 fn connection(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     if app.session.comfy.image_api {
         connection_api(app, ui);
@@ -454,15 +472,21 @@ fn connection(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             commit(app, &url);
         }
         if ui.button("Check").clicked() {
-            match app.run("ai.comfyui.check", json!({})) {
-                Ok(v) => {
-                    let version = v.pointer("/server/system/comfyui_version").and_then(Value::as_str).unwrap_or("?").to_string();
-                    app.comfy_queue.check = Some(format!("ComfyUI {version}"));
-                }
-                Err(e) => app.comfy_queue.check = Some(format!("✗ {e}")),
-            }
+            run_check(app);
         }
     });
+    // A server that did not answer is usually just not running: one click starts it — the
+    // configured launch command, or a local ComfyUI the desktop shell finds when none is set.
+    // The start runs as a job, so the panel stays live while a cold ComfyUI loads.
+    let bad = app.comfy_queue.check.as_deref().is_some_and(|c| c.starts_with("✗"));
+    if app.comfy_queue.starting {
+        ui.label(egui::RichText::new("starting ComfyUI…").small().weak());
+    } else if bad && ui.button("Start ComfyUI").clicked() {
+        match app.run("ai.comfyui.start", json!({})) {
+            Ok(_) => app.comfy_queue.starting = true,
+            Err(e) => app.comfy_queue.check = Some(format!("✗ {e}")),
+        }
+    }
 }
 
 /// The Image API counterpart of [`connection`] (the iPad app): the endpoint, model and key every

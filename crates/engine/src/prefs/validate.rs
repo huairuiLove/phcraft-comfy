@@ -67,7 +67,16 @@ pub const IMAGE_API_ONLY: &[&str] = &["integrations.imageApiBase", "integrations
 
 /// The ComfyUI server settings: the mobile apps have no ComfyUI server to talk to, so the dialog
 /// hides them there (the desktop shows them, and hides the Image API ones instead).
-pub const COMFYUI_ONLY: &[&str] = &["integrations.comfyUrl", "integrations.comfyWorkflowsDir"];
+pub const COMFYUI_ONLY: &[&str] = &[
+    "integrations.comfyUrl",
+    "integrations.comfyWorkflowsDir",
+    "integrations.comfyAutostart",
+    "integrations.comfyCommand",
+];
+
+/// Longest launch command the ComfyUI auto-start accepts (a shell one-liner; megabyte strings
+/// from a hostile preferences file are refused, not stored).
+const COMFY_COMMAND_MAX: usize = 2_000;
 
 /// Whether a graphics adapter called `name` is the one `performance.gpuAdapter` (`wanted`) asks
 /// for: every whitespace-separated word of `wanted` appears in the name, ignoring case ("nvidia",
@@ -264,6 +273,12 @@ pub(super) fn check_value(path: &str, v: &Value) -> std::result::Result<(), Stri
         let x = v.as_f64().ok_or_else(|| format!("`{path}` must be a number"))?;
         if !(lo..=hi).contains(&x) {
             return Err(format!("`{path}` must be within {lo}..{hi} (got {x})"));
+        }
+    }
+    if path == "integrations.comfyCommand" {
+        let s = v.as_str().ok_or("`integrations.comfyCommand` must be a string")?;
+        if s.len() > COMFY_COMMAND_MAX {
+            return Err(format!("`integrations.comfyCommand` is longer than {COMFY_COMMAND_MAX} characters"));
         }
     }
     if is_color(path) && v.as_str().and_then(parse_hex).is_none() {
