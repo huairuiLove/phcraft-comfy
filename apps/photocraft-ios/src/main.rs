@@ -164,6 +164,10 @@ impl IosShell {
         // reach the system pasteboard, which egui-winit cannot do on iOS.
         cc.egui_ctx.add_plugin(photocraft_ui_egui::system_clipboard::CopySync::new(clipboard::bridge()));
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services());
+        // Pen-only painting, the iPad's own policy (Photoshop on iPad): a finger pans, pinches
+        // and taps the UI, the Apple Pencil paints. The flag is each shell's choice — Android
+        // and the web leave it off — and the classifier is shared (input/finger.rs).
+        app.pen_only_painting = true;
         // Testing aid (a launcher sets no CLI args for an iPad app): open a document at start,
         // to reproduce the canvas states a reviewer sees.
         if std::env::var_os("PHOTOCRAFT_OPEN_NEW").is_some()

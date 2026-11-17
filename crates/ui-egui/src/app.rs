@@ -31,6 +31,7 @@ pub(crate) use targets::adjustment_layer_active;
 #[cfg(test)]
 pub(crate) use thumbs::layer_thumb_frame;
 pub use thumbs::surface_fingerprint;
+pub(crate) use thumbs::{ThumbCache, ThumbFrames, layer_thumb_cached};
 
 impl PhotocraftApp {
     pub fn new(mut session: Session, mut services: Services) -> Self {
@@ -214,6 +215,8 @@ impl PhotocraftApp {
             held_preset_import: None,
             allow_close: false,
             stylus: Default::default(),
+            fingers: Default::default(),
+            pen_only_painting: false,
             control_click: Default::default(),
             background_jobs: false,
             min_frame_ms: None,

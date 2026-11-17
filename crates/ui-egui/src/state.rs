@@ -514,6 +514,11 @@ pub struct UiState {
     /// The status message is an error (shown in the warning colour).
     #[serde(default)]
     pub status_error: bool,
+    /// The layer tray's mode (the tray popup's toggle): Copy keeps the source layers on stash and
+    /// keeps the slot on place; Cut removes the source layers on stash and empties the slot on
+    /// place — move semantics. `#[serde(default)]` restores Copy where the saved state predates it.
+    #[serde(default)]
+    pub tray_cut: bool,
     /// Non-blocking notices (import/export warnings, files that couldn't open), newest last.
     #[serde(default)]
     pub notices: Vec<crate::notices::Notice>,
@@ -643,6 +648,7 @@ impl Default for UiState {
             next_id: 1,
             status: String::new(),
             status_error: false,
+            tray_cut: false,
             notices: Vec::new(),
             updates_open: false,
             gpu_fallback_notice: None,

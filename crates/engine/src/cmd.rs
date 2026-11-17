@@ -106,6 +106,7 @@ pub mod layer_multi_cmds;
 pub mod layer_nav_cmds;
 mod layer_params;
 mod layer_references;
+pub mod layer_tray_cmds;
 pub mod layer_xmp_cmds;
 pub mod lens_cmds;
 pub mod magnetic_cmds;
@@ -1305,6 +1306,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::layer_style::specs());
     v.extend(crate::contour_lib_cmds::specs());
     v.extend(crate::layer_list_cmds::specs());
+    v.extend(crate::layer_tray_cmds::specs());
     v.extend(crate::filters::specs());
     v.extend(crate::filters_ext::specs());
     v.extend(crate::color_to_alpha_cmds::specs());

@@ -41,7 +41,7 @@ fn doc_index(s: &Session, p: &Value, key: &str) -> Result<Option<usize>> {
 }
 
 /// An `[x, y]` param of finite numbers within ±10⁷ pixels.
-fn point(p: &Value, key: &str) -> Result<Option<[f64; 2]>> {
+pub(crate) fn point(p: &Value, key: &str) -> Result<Option<[f64; 2]>> {
     let Some(v) = p.get(key) else { return Ok(None) };
     let xy = v.as_array().filter(|a| a.len() == 2).and_then(|a| Some([a[0].as_f64()?, a[1].as_f64()?]));
     match xy {
@@ -55,12 +55,12 @@ pub(crate) fn layered(mode: ColorMode) -> bool {
     matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Cmyk | ColorMode::Lab)
 }
 
-fn center(r: Rect) -> [f64; 2] {
+pub(crate) fn center(r: Rect) -> [f64; 2] {
     [(f64::from(r.x0) + f64::from(r.x1)) / 2.0, (f64::from(r.y0) + f64::from(r.y1)) / 2.0]
 }
 
 /// Restore missing shape caches, or refresh every shape for a changed canvas, including groups.
-fn prepare_shapes(layers: &mut [Layer], doc: &Document, new_canvas: bool) {
+pub(crate) fn prepare_shapes(layers: &mut [Layer], doc: &Document, new_canvas: bool) {
     for layer in layers {
         match &mut layer.content {
             LayerContent::Shape(shape) if new_canvas || shape.cache.is_none() => crate::vector_cmds::refresh_shape(doc, shape),

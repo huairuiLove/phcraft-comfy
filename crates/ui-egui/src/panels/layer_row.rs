@@ -603,6 +603,35 @@ pub(super) fn layer_thumb_fit(cell: Rect, w: u32, h: u32) -> (Rect, Rect) {
 }
 
 fn draw_layer_thumb(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui, doc: &photocraft_doc::Document, l: &Layer, rect: Rect, selected: bool) {
+    let clip = app.session.prefs().interface.clip_thumbnails_to_layer_bounds;
+    // A solid fill shows what its Colour Picker would commit, while that picker is open.
+    let solid = match &l.content {
+        LayerContent::Fill(photocraft_doc::Fill::Solid(color)) => Some(crate::solid_fill_ui::thumbnail_color(app, doc.id, l.id, *color)),
+        _ => None,
+    };
+    // The thumbnail caches are what this needs to write; borrowing them apart from the app lets
+    // the layer tray draw a stashed document's layers, which it borrows from the session.
+    let PhotocraftApp { thumbs, thumb_frames, .. } = app;
+    paint_layer_thumb(thumbs, thumb_frames, clip, solid, ctx, ui, doc, l, rect, selected);
+}
+
+/// Paints a layer's thumbnail tile: the pixels over the checkerboard, or the tile Photoshop shows
+/// for a frame, type, adjustment, group or fill layer. `solid` is the colour an open Colour Picker
+/// would commit to a solid fill; `None` draws the fill as it is stored. Taken apart from the app
+/// so the layer tray can draw its stashed (not open) document's layers.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn paint_layer_thumb(
+    thumbs: &mut crate::ThumbCache,
+    thumb_frames: &mut crate::ThumbFrames,
+    clip: bool,
+    solid: Option<photocraft_doc::Color>,
+    ctx: &egui::Context,
+    ui: &egui::Ui,
+    doc: &photocraft_doc::Document,
+    l: &Layer,
+    rect: Rect,
+    selected: bool,
+) {
     let t = Tokens::get(ctx);
     let p = ui.painter();
     if let Some(f) = &l.frame {
@@ -633,7 +662,7 @@ fn draw_layer_thumb(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui,
         // Gradient fills show the gradient itself (Photoshop); solid ones their colour.
         LayerContent::Fill(f) if crate::gradient_ui::paint_thumbnail(ui, l.id, f, rect) => {}
         LayerContent::Fill(photocraft_doc::Fill::Solid(color)) => {
-            crate::solid_fill_ui::paint_thumbnail(ui, crate::solid_fill_ui::thumbnail_color(app, doc.id, l.id, *color), rect);
+            crate::solid_fill_ui::paint_thumbnail(ui, solid.unwrap_or(*color), rect);
         }
         LayerContent::Fill(_) => {
             let c = [128, 128, 128, 255];
@@ -644,7 +673,7 @@ fn draw_layer_thumb(app: &mut PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui,
             if ui.is_rect_visible(rect) {
                 // The texture is a letterboxed square: draw only the part its frame (the document,
                 // or the layer's bounds) fills.
-                let (tex, frame) = app.layer_thumb(ctx, doc, l);
+                let (tex, frame) = crate::app::layer_thumb_cached(thumbs, thumb_frames, clip, doc.bounds(), ctx, l);
                 let (fitted, uv) = layer_thumb_fit(rect, frame.width(), frame.height());
                 widgets::checker(p, fitted, 5.0);
                 p.image(tex, fitted, uv, Color32::WHITE);

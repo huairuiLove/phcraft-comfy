@@ -1,6 +1,7 @@
 pub(super) mod alt_grab;
 pub(super) mod blend_keys;
 pub(super) mod control_click;
+pub mod finger;
 pub mod hold_keys;
 pub(super) mod layout_keys;
 pub mod nudge_bundle;

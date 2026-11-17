@@ -420,6 +420,19 @@ pub fn font_files(script: CjkScript) -> Vec<FontFile> {
             TraditionalChinese => pingfang("PingFang TC".to_string()).into_iter().chain([f("/System/Library/Fonts/STHeiti Light.ttc", "Heiti TC")]).collect(),
             Korean => vec![f("/System/Library/Fonts/AppleSDGothicNeo.ttc", "Apple SD Gothic Neo")],
         }
+    } else if cfg!(target_os = "android") {
+        // Android, unlike iPadOS, ships readable font files: under the fonts APEX module on
+        // API 29+ and in /system/fonts on older builds. One CJK collection covers all four
+        // scripts (the face picks the glyph forms, as on Linux); callers skip paths that don't
+        // exist, and the embedded craft-fonts faces cover the scripts when neither place has
+        // one (see apps/photocraft-android/android/build.sh).
+        let _ = script;
+        vec![
+            f("/apex/com.android.fonts/font/NotoSansCJK-VF.ttc", "Noto Sans CJK"),
+            f("/apex/com.android.fonts/font/NotoSansCJK-Regular.ttc", "Noto Sans CJK"),
+            f("/system/fonts/NotoSansCJK-VF.ttc", "Noto Sans CJK"),
+            f("/system/fonts/NotoSansCJK-Regular.ttc", "Noto Sans CJK"),
+        ]
     } else if cfg!(target_os = "ios") {
         // iPadOS exposes no system font files an app sandbox may read. The script fallback
         // comes from the embedded craft-fonts faces instead (built with CRAFT_FONTS_DIR; see
@@ -515,6 +528,15 @@ pub fn last_resort_files() -> Vec<FontFile> {
     let f = |p: &str| FontFile { path: p.into(), family: String::new() };
     if cfg!(target_os = "macos") {
         vec![f("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"), f("/Library/Fonts/Arial Unicode.ttf")]
+    } else if cfg!(target_os = "android") {
+        // Readable broad-coverage fallbacks when the per-script files are missing (see
+        // `font_files` for the APEX vs /system split); the embedded craft-fonts remain the last
+        // resort.
+        vec![
+            f("/apex/com.android.fonts/font/DroidSansFallbackFull.ttf"),
+            f("/system/fonts/DroidSansFallbackFull.ttf"),
+            f("/system/fonts/DroidSansFallback.ttf"),
+        ]
     } else if cfg!(target_os = "ios") {
         // No readable system font files in an app sandbox; the embedded craft-fonts faces cover
         // the scripts instead (see `font_files`).

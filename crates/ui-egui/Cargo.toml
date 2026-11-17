@@ -34,7 +34,7 @@ photocraft-codecs = { workspace = true }
 photocraft-psd = { workspace = true }
 egui = { workspace = true }
 egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
-eframe = { workspace = true, features = ["wgpu", "accesskit", "clipboard"] }
+eframe = { workspace = true, features = ["wgpu", "clipboard"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -52,6 +52,12 @@ craft-update = { workspace = true }
 rayon = { workspace = true }
 # Safe native UI-language APIs (Windows/macOS); no subprocess or web dependency.
 sys-locale = "=0.3.2"
+
+# Platform accessibility adapters (AccessKit). eframe only offers them with `android-game-activity`
+# on Android (a Java-glue backend the hand-rolled NativeActivity APK doesn't carry), so the feature
+# is off there; `egui::accesskit` (the node tree the tests read) comes from egui itself regardless.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+eframe = { workspace = true, features = ["accesskit"] }
 
 # Installed RAM for the GPU memory budget (`gpu_canvas::physical_memory`) and the user's decimal
 # symbol (`i18n::decimal_separator`, a registry read): the safe binding the desktop app already

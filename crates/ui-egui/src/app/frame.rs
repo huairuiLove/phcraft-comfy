@@ -301,6 +301,11 @@ impl PhotocraftApp {
         if ((chrome && self.ui.panels.toolbar) || tabbed_in) && !home {
             panels::toolbar(self, ui);
         }
+        // The touch quick-actions column (Undo/Redo/Copy/Cut/Paste) floats over the canvas's
+        // top-right corner whether the dock is shown or not (panels/quick_actions.rs).
+        if chrome && !home {
+            panels::quick_actions::column(self, ui);
+        }
         // craft-ui's layout holds the canvas as its protected `canvas` panel.
         let docking = ((chrome && self.ui.panels.dock) || tabbed_in) && !home;
         if docking {
