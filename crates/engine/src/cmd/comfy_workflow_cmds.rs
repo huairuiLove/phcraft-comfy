@@ -672,7 +672,7 @@ pub fn analyze(workflow: &Value) -> Value {
 
 const BUILTIN_FLUX3: &str = "FLUX.3 Klein Image Edit";
 
-/// The fixed OpenAI-compatible Image API workflow (the iPad app): its single node names no
+/// The fixed OpenAI-compatible Image API workflow (used by native and mobile shells): its single node names no
 /// ComfyUI class at all — [`fill`] routes it to one direct `ComfyCall::ApiImage` call instead of
 /// queueing a graph. The `prompt` input is what the panel's prompt box targets (the API-style
 /// fallback in [`inject`]); `negative_prompt` documents what the call has no counterpart for.

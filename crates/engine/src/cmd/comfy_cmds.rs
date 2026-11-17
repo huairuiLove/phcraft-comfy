@@ -16,11 +16,11 @@
 //! (ComfyUI › Workflow › Export (API)) for anything else; a custom graph's output images are
 //! placed the same way.
 //!
-//! The iPad shell injects a transport with no ComfyUI server behind it at all: it speaks the
-//! OpenAI-compatible Image API directly (`ComfyCall::ApiImage`/`ApiCheck`, the settings in
-//! Preferences ▸ Integrations). [`comfy_workflow_cmds`]' "Image API Edit" workflow routes
-//! `ai.comfyui.fill` through that call — prompt plus source image in, one image back — skipping
-//! the whole queue/poll/download protocol.
+//! Native shells can also inject an OpenAI-compatible Image API transport directly
+//! (`ComfyCall::ApiImage`/`ApiCheck`, the settings in Preferences ▸ Integrations). The PhotoComfy
+//! mobile shells use that transport without a ComfyUI server. [`comfy_workflow_cmds`]' "Image API
+//! Edit" workflow routes `ai.comfyui.fill` through that call — prompt plus source image in, one
+//! image back — skipping the whole queue/poll/download protocol.
 
 use std::sync::Arc;
 
@@ -54,9 +54,8 @@ pub enum ComfyCall {
     Download { filename: String, subfolder: String, kind: String },
     /// POST /upload/image — an img2img source image.
     Upload { name: String, bytes: Vec<u8> },
-    /// The fixed OpenAI-compatible image call, no ComfyUI server in the loop (the iPad shell's
-    /// transport): `/v1/images/edits` with a source image, `/v1/images/generations` without one.
-    /// The reply is the one generated image as bytes.
+    /// An OpenAI-compatible image call: `/v1/images/edits` with a source image,
+    /// `/v1/images/generations` without one. The reply is the one generated image as bytes.
     ApiImage { base: String, key: String, model: String, prompt: String, image: Option<Vec<u8>>, timeout_s: u64 },
     /// GET `/v1/models` — the Image API connection check. The reply is the server's model list.
     ApiCheck { base: String, key: String },
@@ -83,9 +82,8 @@ pub type ComfyFn = Arc<dyn Fn(&ComfyRequest) -> std::result::Result<ComfyReply, 
 pub struct Comfy {
     /// Set by the desktop shell at startup (`Services::comfy_transport`).
     pub transport: Option<ComfyFn>,
-    /// True when the injected transport speaks the OpenAI-compatible Image API instead of a
-    /// ComfyUI server (the iPad shell): gates the "Image API Edit" workflow and the connection
-    /// check's API branch.
+    /// True when the injected transport supports the OpenAI-compatible Image API: gates the
+    /// "Image API Edit" workflow and the connection check's API branch.
     pub image_api: bool,
     /// Where `ai.comfyui.workflows.*` keeps imported workflows: the platform config directory's
     /// `comfy_workflows` folder, set by the desktop shell (`None` on the web and headless).
@@ -597,15 +595,28 @@ pub(crate) fn uploaded_name(v: &Value) -> Option<String> {
     }
 }
 
-/// The output images of a finished prompt from `/history/<id>`: every `SaveImage` output with
-/// `type: "output"`. `None` while the prompt is still queued or running (no history entry).
+/// The image outputs of a finished prompt from `/history/<id>`. ComfyUI's built-in `SaveImage`
+/// uses `images` with `type: "output"`; custom nodes commonly use `PreviewImage` or named arrays
+/// such as `a_images`/`b_images` with `type: "temp"`. All are valid images for the current prompt.
+/// `None` while the prompt is still queued or running (no history entry).
 pub fn history_outputs(history: &Value, prompt_id: &str) -> Option<Vec<Value>> {
     let outputs = history.get(prompt_id)?.get("outputs")?.as_object()?;
     let mut out = Vec::new();
     for node in outputs.values() {
-        for image in node.get("images").and_then(Value::as_array).into_iter().flatten() {
-            if image.get("type").and_then(Value::as_str) == Some("output") {
-                out.push(image.clone());
+        let Some(node) = node.as_object() else { continue };
+        for (key, values) in node {
+            if !(key == "images" || key.ends_with("_images")) {
+                continue;
+            }
+            for image in values.as_array().into_iter().flatten() {
+                let Some(filename) = image.get("filename").and_then(Value::as_str).filter(|s| !s.is_empty()) else { continue };
+                let kind = image.get("type").and_then(Value::as_str).filter(|s| *s == "output" || *s == "temp").unwrap_or("output");
+                let mut image = image.clone();
+                if let Some(object) = image.as_object_mut() {
+                    object.insert("filename".into(), Value::String(filename.to_string()));
+                    object.insert("type".into(), Value::String(kind.to_string()));
+                }
+                out.push(image);
             }
         }
     }
@@ -763,6 +774,9 @@ pub fn image_api_images(v: &Value) -> std::result::Result<Vec<ImageApiImage>, St
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64)
                 .map_err(|e| format!("decoding the reply's b64_json: {e}"))?;
+            if bytes.len() as u64 > IMAGE_MAX {
+                return Err(format!("the reply's image is over the {} MiB limit", IMAGE_MAX / 1_048_576));
+            }
             out.push(ImageApiImage::Bytes(bytes));
         } else if let Some(url) = entry.get("url").and_then(Value::as_str) {
             if url.len() > 8_000 || !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -969,13 +983,17 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
 // ------------------------------------------------------------------ queries
 
 fn check(s: &mut Session, p: &Value) -> Result<Value> {
-    if p.as_object().is_some_and(|o| !o.is_empty() && !o.contains_key("url")) {
-        return Err(bad("ai.comfyui.check", "pass only {\"url\"}, or nothing"));
+    if p.as_object().is_some_and(|o| !o.is_empty() && !o.keys().all(|k| k == "url" || k == "backend")) {
+        return Err(bad("ai.comfyui.check", "pass only {\"url\"}, {\"backend\":\"image_api\"}, or nothing"));
     }
     let transport = transport_of(s)?;
-    // The iPad shell's transport has no ComfyUI server behind it: the check reads the Image API's
-    // own model list instead, and says whether the configured model is offered.
-    if s.comfy.image_api {
+    let backend = p.get("backend").and_then(Value::as_str);
+    if backend.is_some_and(|v| v != "image_api" && v != "comfyui") {
+        return Err(bad("ai.comfyui.check", "`backend` must be `comfyui` or `image_api`"));
+    }
+    // Mobile shells have only the Image API transport. Native desktop shells can select it
+    // explicitly while retaining their ComfyUI server connection as the default.
+    if backend == Some("image_api") || (s.comfy.image_api && s.comfy.workflows_dir.is_none()) {
         let cfg = image_api_of(s, "ai.comfyui.check")?;
         let v = json_of(
             transport(&ComfyRequest { url: cfg.base.clone(), call: ComfyCall::ApiCheck { base: cfg.base.clone(), key: cfg.key.clone() } })
@@ -1243,10 +1261,13 @@ mod tests {
                 {"filename": "a.png", "subfolder": "", "type": "output"},
                 {"filename": "temp.png", "subfolder": "", "type": "temp"},
                 {"filename": "b.png", "subfolder": "s", "type": "output"}]},
+            "compare": {"a_images": [{"filename": "preview.png", "subfolder": "", "type": "temp"}], "b_images": [{"filename": "fallback.png", "subfolder": ""}]},
             "bad": {"not_images": true}}, "status": {"status_str": "success"}}});
         let out = history_outputs(&h, "p1").unwrap();
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[1].get("subfolder"), Some(&json!("s")));
+        assert_eq!(out.len(), 5);
+        assert_eq!(out[2].get("subfolder"), Some(&json!("s")));
+        assert_eq!(out[3].get("type"), Some(&json!("temp")));
+        assert_eq!(out[4].get("type"), Some(&json!("output")));
         assert_eq!(history_error(&h, "p1"), None);
         let e = json!({"p1": {"outputs": {}, "status": {"status_str": "error"}}});
         assert_eq!(history_outputs(&e, "p1"), Some(Vec::new()));

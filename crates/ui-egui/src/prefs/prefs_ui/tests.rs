@@ -2137,12 +2137,11 @@ fn touch_scale_settles_instead_of_oscillating() {
 
 #[test]
 fn generation_backend_settings_show_only_where_they_run() {
-    // The direct Image API fields belong to the mobile apps' transport, the ComfyUI server
-    // settings to the desktop shell; each build hides the pair it cannot run.
-    let mobile = cfg!(any(target_os = "ios", target_os = "android"));
+    // Native shells can provide either backend; only the browser lacks the injected HTTP client.
     for key in ["imageApiBase", "imageApiKey", "imageApiModel"] {
-        assert_eq!(prefs::is_hidden(&format!("integrations.{key}")), !mobile, "{key}");
+        assert_eq!(prefs::is_hidden(&format!("integrations.{key}")), cfg!(target_arch = "wasm32"), "{key}");
     }
+    let mobile = cfg!(any(target_os = "ios", target_os = "android"));
     for key in ["comfyUrl", "comfyWorkflowsDir"] {
         assert_eq!(prefs::is_hidden(&format!("integrations.{key}")), mobile, "{key}");
     }

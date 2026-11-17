@@ -52,7 +52,7 @@ pub const HIDDEN_UNTIL_IMPLEMENTED: &[&str] = &[
 pub fn is_hidden(path: &str) -> bool {
     HIDDEN_UNTIL_IMPLEMENTED.contains(&path)
         || (!cfg!(target_os = "linux") && LINUX_ONLY.contains(&path))
-        || (!cfg!(any(target_os = "ios", target_os = "android")) && IMAGE_API_ONLY.contains(&path))
+        || (cfg!(target_arch = "wasm32") && IMAGE_API_ONLY.contains(&path))
         || (cfg!(any(target_os = "ios", target_os = "android")) && COMFYUI_ONLY.contains(&path))
 }
 
@@ -60,9 +60,8 @@ pub fn is_hidden(path: &str) -> bool {
 /// still load, save and round-trip on every platform.
 pub const LINUX_ONLY: &[&str] = &["performance.linuxDisplayServer", "performance.gpuAdapter"];
 
-/// The direct Image API settings (the mobile apps' generation backend): the desktop shells
-/// inject a ComfyUI transport and never read them, so the dialog hides them there. Like every
-/// hidden preference they still load, save and round-trip.
+/// The direct Image API settings. Native shells may provide an OpenAI-compatible transport;
+/// browser builds keep these fields hidden because they have no native transport injection.
 pub const IMAGE_API_ONLY: &[&str] = &["integrations.imageApiBase", "integrations.imageApiKey", "integrations.imageApiModel"];
 
 /// The ComfyUI server settings: the mobile apps have no ComfyUI server to talk to, so the dialog

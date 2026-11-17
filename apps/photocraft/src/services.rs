@@ -764,6 +764,7 @@ pub fn native(automation: Option<photocraft_automation::AuthorizedWorkspace>) ->
         beep: Some(platform_beep),
         check_updates: Some(crate::updates::service()),
         comfy_transport: Some(crate::comfy::transport()),
+        comfy_image_api: true,
         comfy_workflows_dir: config_dir().map(|d| d.join("comfy_workflows")),
         comfy_generations_dir: config_dir().map(|d| d.join("Generations")),
         clipboard_set_image: Some({
